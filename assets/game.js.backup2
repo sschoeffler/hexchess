@@ -1,0 +1,655 @@
+console.log('🚀 CLEAN game.js loaded');
+
+// Auth functions
+function showAuth(type) {
+    document.getElementById('loginForm').style.display = type === 'login' ? 'block' : 'none';
+    document.getElementById('registerForm').style.display = type === 'register' ? 'block' : 'none';
+}
+
+function login(event) {
+    event.preventDefault();
+    const form = event.target;
+    const formData = new FormData(form);
+    formData.append('action', 'login');
+    
+    fetch(window.location.href, {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            showNotification('Login Failed', data.error, 'error');
+        }
+    });
+}
+
+function register(event) {
+    event.preventDefault();
+    const form = event.target;
+    const formData = new FormData(form);
+    formData.append('action', 'register');
+    
+    fetch(window.location.href, {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            showNotification('Registration Failed', data.error, 'error');
+        }
+    });
+}
+
+function logout() {
+    fetch(window.location.href, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: 'action=logout'
+    })
+    .then(() => location.reload());
+}
+
+// Game creation
+function createGame(event) {
+    event.preventDefault();
+    const form = event.target;
+    const formData = new FormData(form);
+    formData.append('action', 'create_game');
+    
+    fetch(window.location.href, {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            window.location.href = `?page=game&id=${data.game_id}`;
+        } else {
+            showNotification('Failed to Create Game', data.error, 'error');
+        }
+    });
+}
+
+// Game joining
+function joinGame(gameId) {
+    console.log('🎮 Joining game:', gameId);
+    fetch(window.location.href, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `action=join_game&game_id=${gameId}`
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            window.location.href = `?page=game&id=${gameId}`;
+        } else {
+            showNotification('Failed to Join', data.error, 'error');
+        }
+    });
+}
+
+function loadAvailableGames() {
+    console.log('🔍 Loading available games...');
+    
+    fetch(window.location.pathname + '?api=games')
+        .then(response => {
+            console.log('📡 Response status:', response.status);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(games => {
+            console.log('✅ Games loaded successfully:', games.length, 'games');
+            
+            const gameList = document.getElementById('available-games');
+            if (!gameList) {
+                console.error('❌ gameList element not found');
+                return;
+            }
+            
+            if (games.length === 0) {
+                gameList.innerHTML = '<p>No games available. Create one!</p>';
+                return;
+            }
+            
+            const gameHtml = games.map(game => `
+                <div class="game-item">
+                    <div class="game-info">
+                        <h3>${game.game_name}</h3>
+                        <p>${game.current_players}/${game.player_count} players • Created by ${game.creator}</p>
+                    </div>
+                    <button class="btn" onclick="joinGame('${game.game_id}')">Join</button>
+                </div>
+            `).join('');
+            
+            gameList.innerHTML = gameHtml;
+            console.log('✅ Game list updated in DOM');
+        })
+        .catch(error => {
+            console.error('❌ Error loading games:', error);
+            const gameList = document.getElementById('available-games');
+            if (gameList) {
+                gameList.innerHTML = '<p>Error loading games. Check console.</p>';
+            }
+        });
+}
+
+// Utility functions
+function updateDefaultGameName() {
+    const gameNameInput = document.getElementById('game_name');
+    const playerCount = document.getElementById('player_count').value;
+    const boardSize = document.getElementById('board_size').value;
+    
+    const currentValue = gameNameInput.value;
+    const isDefaultPattern = /^\d-Player (Small|Medium|Large) Game$/.test(currentValue);
+    
+    if (isDefaultPattern || currentValue === '') {
+        const sizeNames = {
+            '6': 'Small',
+            '7': 'Medium', 
+            '8': 'Large'
+        };
+        
+        const defaultName = `${playerCount}-Player ${sizeNames[boardSize]} Game`;
+        gameNameInput.value = defaultName;
+    }
+}
+
+function resetToDefaultName() {
+    const playerCount = document.getElementById('player_count').value;
+    const boardSize = document.getElementById('board_size').value;
+    const gameNameInput = document.getElementById('game_name');
+    
+    const sizeNames = {
+        '6': 'Small',
+        '7': 'Medium', 
+        '8': 'Large'
+    };
+    
+    const defaultName = `${playerCount}-Player ${sizeNames[boardSize]} Game`;
+    gameNameInput.value = defaultName;
+    
+    showNotification('✅ Name Reset', 'Game name reset to default', 'success');
+}
+
+function showNotification(title, message, type = 'error') {
+    console.log(`📢 Notification: ${title} - ${message}`);
+    
+    const existing = document.querySelector('.notification');
+    if (existing) existing.remove();
+    
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+    notification.innerHTML = `
+        <div class="notification-title">${title}</div>
+        <div class="notification-message">${message}</div>
+    `;
+    
+    document.body.appendChild(notification);
+    
+    setTimeout(() => notification.classList.add('show'), 100);
+    
+    setTimeout(() => {
+        notification.classList.remove('show');
+        setTimeout(() => notification.remove(), 300);
+    }, 3000);
+}
+
+// Game-specific JavaScript
+function selectHex(q, r) {
+    if (typeof userCanMove !== 'undefined' && !userCanMove) {
+        showNotification('Not Your Turn', 'Wait for your turn to move', 'warning');
+        return;
+    }
+    
+    const cell = document.querySelector(`[data-q="${q}"][data-r="${r}"]`);
+    
+    if (selectedHex && selectedHex.q === q && selectedHex.r === r) {
+        clearSelection();
+        return;
+    }
+    
+    if (selectedHex && cell.classList.contains('valid-move')) {
+        makeMove(selectedHex.q, selectedHex.r, q, r);
+        return;
+    }
+    
+    clearSelection();
+    selectedHex = {q: q, r: r};
+    cell.classList.add('selected');
+    if (typeof gameId !== 'undefined') {
+        getValidMoves(q, r);
+    } else {
+        // For demo mode, highlight some example moves
+        highlightValidMoves(q, r);
+    }
+}
+
+function clearSelection() {
+    document.querySelectorAll('.hex-cell').forEach(cell => {
+        cell.classList.remove('selected', 'valid-move');
+    });
+    selectedHex = null;
+}
+
+function clearCheckHighlights() {
+    document.querySelectorAll('.hex-cell').forEach(cell => {
+        cell.classList.remove('king-in-check');
+    });
+}
+
+function highlightValidMoves(q, r) {
+    const directions = [
+        [1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1],
+        [2, -1], [1, -2], [-1, -1], [-2, 1], [-1, 2], [1, 1]
+    ];
+    
+    directions.forEach(([dq, dr]) => {
+        const newQ = q + dq;
+        const newR = r + dr;
+        const targetCell = document.querySelector(`[data-q="${newQ}"][data-r="${newR}"]`);
+        if (targetCell) {
+            targetCell.classList.add('valid-move');
+        }
+    });
+}
+
+function getValidMoves(q, r) {
+    fetch(window.location.href, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `action=getValidMoves&game_id=${gameId}&fromQ=${q}&fromR=${r}`
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success && data.validMoves && data.validMoves.length > 0) {
+            data.validMoves.forEach(move => {
+                const targetCell = document.querySelector(`[data-q="${move.q}"][data-r="${move.r}"]`);
+                if (targetCell) {
+                    targetCell.classList.add('valid-move');
+                }
+            });
+        } else {
+            clearSelection();
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        clearSelection();
+    });
+}
+
+function makeMove(fromQ, fromR, toQ, toR) {
+    fetch(window.location.href, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `action=move&game_id=${gameId}&fromQ=${fromQ}&fromR=${fromR}&toQ=${toQ}&toR=${toR}`
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            if (data.kingsInCheck && data.kingsInCheck.length > 0) {
+                highlightKingsInCheck(data.kingsInCheck);
+            }
+            
+            updateGameState(data.gameState);
+            clearSelection();
+        } else {
+            if (data.errorType === 'exposes-king') {
+                showNotification('⚠️ King in Danger!', 'That move would expose your king to check', 'warning');
+            } else if (data.errorType === 'wrong-player') {
+                showNotification('❌ Wrong Piece', 'You can only move your own pieces', 'error');
+            } else if (data.errorType === 'no-piece') {
+                showNotification('❌ No Piece', 'No piece at selected position', 'error');
+            } else {
+                showNotification('❌ Invalid Move', data.error || 'Move not allowed', 'error');
+            }
+        }
+        clearSelection();
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showNotification('❌ Connection Error', 'Unable to make move', 'error');
+        clearSelection();
+    });
+}
+
+function highlightKingsInCheck(kingsInCheck) {
+    clearCheckHighlights();
+    kingsInCheck.forEach(king => {
+        const kingCell = document.querySelector(`[data-q="${king.q}"][data-r="${king.r}"]`);
+        if (kingCell) {
+            kingCell.classList.add('king-in-check');
+        }
+    });
+}
+
+function updateGameState(gameState) {
+    if (gameState.gameStatus.gameOver) {
+        showNotification('🏁 Game Over', 'Game has ended!', 'success');
+        if (typeof userCanMove !== 'undefined') {
+            userCanMove = false;
+        }
+    }
+    
+    setTimeout(() => location.reload(), 1000);
+}
+
+// Main game functions for demo mode
+function newGame() {
+    if (typeof gameId === 'undefined') {
+        // Demo mode
+        location.reload();
+    } else {
+        // Real game mode
+        fetch(window.location.href, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: 'action=newgame'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            }
+        })
+        .catch(error => console.error('Error:', error));
+    }
+}
+
+function showMovementDemo() {
+    const modal = document.getElementById('demoModal');
+    if (modal) {
+        modal.style.display = 'flex';
+    }
+}
+
+function closeDemoModal() {
+    document.getElementById('demoModal').style.display = 'none';
+    const demoBoard = document.getElementById('demoBoard');
+    if (demoBoard) {
+        demoBoard.style.display = 'none';
+        demoBoard.innerHTML = '';
+    }
+    document.querySelectorAll('.demo-btn').forEach(btn => btn.classList.remove('active'));
+    document.getElementById('demoInfo').innerHTML = '<p>Select a piece above to see its movement pattern demonstrated on the full game board.</p>';
+}
+
+// FIXED DEMO SYSTEM
+function showPieceDemo(pieceType) {
+    console.log('🎭 Demo clicked for piece:', pieceType);
+    
+    // Clear all active states and highlight clicked button
+    document.querySelectorAll('.demo-btn').forEach(btn => btn.classList.remove('active'));
+    event.target.classList.add('active');
+    
+    // Show the demo board
+    const demoBoard = document.getElementById('demoBoard');
+    demoBoard.style.display = 'block';
+    demoBoard.innerHTML = createDemoBoard(pieceType);
+    updateDemoExplanation(pieceType);
+    
+    // Scroll to demo board
+    setTimeout(() => {
+        demoBoard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 100);
+}
+
+function createDemoBoard(pieceType) {
+    console.log('🏗️ Creating demo board for:', pieceType);
+    const BOARD_SIZE = 8;
+    let demoQ, demoR;
+    
+    // Position the demo piece
+    switch (pieceType) {
+        case 'pawn':
+            demoQ = -6; demoR = 0; // Better position for pawn demo
+            break;
+        default:
+            demoQ = 0; demoR = 0; // Center position for other pieces
+    }
+    
+    const pieceIcons = {
+        'pawn': '♟', 'rook': '♜', 'bishop': '♝',
+        'knight': '♞', 'queen': '♛', 'king': '♚'
+    };
+    
+    let html = '<div class="hex-board">';
+    
+    // Add direction arrow for pawn demo
+    if (pieceType === 'pawn') {
+        html = '<div class="direction-arrow">Red Pawn Direction</div>' + html;
+    }
+    
+    for (let r = BOARD_SIZE; r >= -BOARD_SIZE; r--) {
+        html += '<div class="hex-row">';
+        
+        for (let q = -BOARD_SIZE; q <= BOARD_SIZE; q++) {
+            if (isValidHex(q, r)) {
+                const cellColor = getCellColor(q, r);
+                const isPiecePosition = (q === demoQ && r === demoR);
+                const moveResult = canPieceMoveTo(pieceType, demoQ, demoR, q, r);
+                const canMoveTo = moveResult === true;
+                const isCapture = moveResult === 'capture';
+                
+                let cellClass = `hex-cell ${cellColor}`;
+                if (isPiecePosition) cellClass += ' demo-piece-tile';
+                if (canMoveTo && !isPiecePosition) cellClass += ' demo-movement-tile';
+                if (isCapture && !isPiecePosition) cellClass += ' demo-capture-tile';
+                
+                const pieceIcon = isPiecePosition ? `<span class='piece red-piece'>${pieceIcons[pieceType]}</span>` : '';
+                
+                html += `<div class='${cellClass}' data-q='${q}' data-r='${r}'>
+                            <div class='hex-inner'>
+                                <div class='hex-content'>${pieceIcon}</div>
+                            </div>
+                         </div>`;
+            }
+        }
+        
+        html += '</div>';
+    }
+    
+    html += '</div>';
+    console.log('✅ Demo board HTML created');
+    return html;
+}
+
+function isValidHex(q, r) {
+    const BOARD_SIZE = 8;
+    return Math.abs(q) <= BOARD_SIZE && 
+           Math.abs(r) <= BOARD_SIZE && 
+           Math.abs(q + r) <= BOARD_SIZE;
+}
+
+function getCellColor(q, r) {
+    const colorIndex = ((q - r) % 3 + 3) % 3;
+    const colors = ['pastel-red', 'pastel-green', 'pastel-blue'];
+    return colors[colorIndex];
+}
+
+// FIXED: Consistent piece movement logic that actually works
+function canPieceMoveTo(pieceType, fromQ, fromR, toQ, toR) {
+    const dq = toQ - fromQ;
+    const dr = toR - fromR;
+    const ds = -dq - dr;
+    
+    // Can't move to same position
+    if (dq === 0 && dr === 0) return false;
+    
+    switch (pieceType) {
+        case 'pawn':
+            // Pawn forward move (red player direction: toward +q)
+            if (dq === 1 && dr === 0) {
+                return true;
+            }
+            // Pawn diagonal captures (color-preserving moves)
+            if (((dq - dr) % 3 === 0) && dq > 0) {
+                return 'capture';
+            }
+            return false;
+            
+        case 'rook':
+            // Rook moves along 3 main axes (6 directions total)
+            return (dq === 0 || dr === 0 || ds === 0);
+            
+        case 'bishop':
+            // Bishop moves along color-preserving diagonals
+            return ((dq - dr) % 3 === 0) && (dq !== 0 || dr !== 0);
+            
+        case 'knight':
+            // Knight: L-shaped moves (all 12 possible combinations)
+            const knightMoves = [
+                [2, 1], [3, -1], [1, 2], [-1, 3],
+                [-2, 3], [-3, 2], [-3, 1], [-2, -1],
+                [-1, -2], [1, -3], [2, -3], [3, -2]
+            ];
+            return knightMoves.some(([mq, mr]) => dq === mq && dr === mr);
+            
+        case 'queen':
+            // Queen combines rook and bishop moves
+            return (dq === 0 || dr === 0 || ds === 0) || 
+                   (((dq - dr) % 3 === 0) && (dq !== 0 || dr !== 0));
+            
+        case 'king':
+            // King moves one step in any direction (6 orthogonal + 6 diagonal)
+            const kingMoves = [
+                [1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1], // orthogonal
+                [1, 1], [-1, -1], [2, -1], [-2, 1], [1, -2], [-1, 2] // diagonal
+            ];
+            return kingMoves.some(([mq, mr]) => dq === mq && dr === mr);
+            
+        default:
+            return false;
+    }
+}
+
+function updateDemoExplanation(pieceType) {
+    console.log('📝 Updating explanation for:', pieceType);
+    const explanations = {
+        'pawn': {
+            title: '♟ Pawn Movement',
+            text: 'Pawns move forward one step toward the opposite corner (red pawns move toward +q direction). They can capture diagonally on color-preserving tiles. The orange tile shows the forward move, red tiles show diagonal captures.'
+        },
+        'rook': {
+            title: '♜ Rook Movement', 
+            text: 'Rooks move along straight lines in the hexagonal grid. They can move in 6 directions along the 3 main hex-axes. All orange tiles show valid rook moves from the center.'
+        },
+        'bishop': {
+            title: '♝ Bishop Movement',
+            text: 'Bishops move diagonally to tiles of the same color. They stay on the same color (red, green, or blue) throughout the entire game. The orange tiles show all diagonal moves that preserve the tile color.'
+        },
+        'knight': {
+            title: '♞ Knight Movement',
+            text: 'Knights move in L-shaped patterns: combinations of 2-3 steps in different directions. Knights can jump over pieces and always land on a different color tile. All orange tiles show possible knight moves.'
+        },
+        'queen': {
+            title: '♛ Queen Movement',
+            text: 'Queens combine rook and bishop movements. They can move along the 6 straight hex-lines like rooks, and also on the color-preserving diagonals like bishops. The most powerful piece!'
+        },
+        'king': {
+            title: '♚ King Movement',
+            text: 'Kings move one step in any direction to adjacent or diagonal hexes. In hexagonal chess, kings have more movement options than in square chess but must still be protected at all times.'
+        }
+    };
+    
+    const info = explanations[pieceType];
+    let legendText = '<p><strong>Green tile:</strong> Current piece position | <strong>Pulsing orange tiles:</strong> Valid moves</p>';
+    
+    if (pieceType === 'pawn') {
+        legendText = '<p><strong>Green tile:</strong> Current piece position | <strong>Orange tile:</strong> Forward move | <strong>Red tiles:</strong> Diagonal captures</p>';
+    }
+    
+    document.getElementById('demoInfo').innerHTML = `
+        <h4>${info.title}</h4>
+        <p>${info.text}</p>
+        ${legendText}
+    `;
+}
+
+// Legacy demo functions (for compatibility)
+function showPiece(pieceType) {
+    // Redirect to new demo system
+    showPieceDemo(pieceType);
+}
+
+function showDemoPieceMoves(q, r, pieceType) {
+    // Legacy function - now handled by createDemoBoard
+    console.log('Legacy showDemoPieceMoves called for:', pieceType);
+}
+
+function clearDemoHighlights() {
+    document.querySelectorAll('.hex-cell').forEach(cell => {
+        cell.classList.remove('selected', 'valid-move', 'capture-square');
+    });
+}
+
+// Event listeners
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('🚀 Game.js initialized');
+    
+    const modal = document.getElementById('demoModal');
+    if (modal) {
+        modal.addEventListener('click', function(e) {
+            if (e.target === modal) {
+                closeDemoModal();
+            }
+        });
+    }
+    
+    // Load available games if on lobby page
+    if (document.getElementById('available-games')) {
+        loadAvailableGames();
+    }
+    
+    // Add hover effects to pieces
+    document.querySelectorAll('.hex-cell').forEach(cell => {
+        cell.addEventListener('mouseenter', function() {
+            const piece = this.querySelector('.piece');
+            if (piece) piece.style.transform = 'scale(1.15)';
+        });
+        
+        cell.addEventListener('mouseleave', function() {
+            const piece = this.querySelector('.piece');
+            if (piece) piece.style.transform = 'scale(1)';
+        });
+    });
+});
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        const modal = document.getElementById('demoModal');
+        const demoBoard = document.getElementById('demoBoard');
+        if (modal && modal.style.display === 'flex') {
+            if (demoBoard && demoBoard.style.display === 'block') {
+                demoBoard.style.display = 'none';
+                demoBoard.innerHTML = '';
+                document.querySelectorAll('.demo-btn').forEach(btn => btn.classList.remove('active'));
+                document.getElementById('demoInfo').innerHTML = '<p>Select a piece above to see its movement pattern demonstrated on the full game board.</p>';
+            } else {
+                closeDemoModal();
+            }
+        } else {
+            clearSelection();
+        }
+    }
+});
+
+console.log('✅ Complete game.js loaded successfully');

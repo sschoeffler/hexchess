@@ -1,0 +1,1698 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+
+/* CSS TEST: LOADED AT [current time] */
+/*
+body {
+    background: lime !important;
+    border: 10px solid red !important;
+}
+*/
+/* MOBILE TEST - Place right after lime test */
+/*
+@media (max-width: 768px) {
+    body { 
+        background: yellow !important; 
+        border: 20px solid blue !important;
+    }
+}
+*/
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    min-height: 100vh;
+}
+
+.header {
+    background: rgba(0, 0, 0, 0.2);
+    padding: 1rem 2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    backdrop-filter: blur(10px);
+}
+
+.header h1 {
+    font-size: 24px;
+    background: linear-gradient(45deg, #fff, #e0e0e0);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.user-info {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+}
+
+.btn {
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.btn:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.1);
+}
+
+.btn-secondary {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.btn-danger {
+    background: linear-gradient(135deg, #e74c3c, #c0392b);
+}
+
+.btn-danger:hover {
+    background: linear-gradient(135deg, #c0392b, #a93226);
+}
+
+.btn-reset {
+    background: rgba(255, 193, 7, 0.2);
+    border: 1px solid rgba(255, 193, 7, 0.5);
+    color: #ffc107;
+    font-size: 12px;
+    padding: 4px 8px;
+    margin-left: 8px;
+}
+
+.btn-reset:hover {
+    background: rgba(255, 193, 7, 0.3);
+    color: #fff;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 2rem auto;
+    padding: 0 2rem;
+}
+
+.auth-container {
+    max-width: 400px;
+    margin: 4rem auto;
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(20px);
+    border-radius: 12px;
+    padding: 2rem;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.form-group {
+    margin-bottom: 1rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+}
+
+.form-group input, .form-group select {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+    font-size: 14px;
+}
+
+.form-group input::placeholder {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.form-group input[name="game_name"], 
+.form-group input[name="room_name"] {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    cursor: text;
+}
+
+.form-group input[name="game_name"]:focus,
+.form-group input[name="room_name"]:focus {
+    border-color: #667eea;
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.3);
+}
+
+.form-helper {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.7);
+    margin-top: 5px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+.timer-settings {
+    background: rgba(255, 255, 255, 0.05);
+    border: 2px dashed rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    padding: 15px;
+    margin-top: 10px;
+    transition: all 0.3s ease;
+}
+
+.timer-settings.active {
+    background: rgba(102, 126, 234, 0.1);
+    border-color: rgba(102, 126, 234, 0.3);
+}
+
+.timer-info {
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 14px;
+    margin-bottom: 10px;
+    text-align: center;
+}
+
+.validation-error {
+    background: rgba(231, 76, 60, 0.2);
+    border: 2px solid #e74c3c;
+    border-radius: 8px;
+    padding: 12px;
+    margin: 10px 0;
+    color: #fff;
+    font-size: 14px;
+    text-align: center;
+    animation: errorShake 0.5s ease-in-out;
+}
+
+@keyframes errorShake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-5px); }
+    75% { transform: translateX(5px); }
+}
+
+.lobby {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+}
+
+.panel {
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(20px);
+    border-radius: 12px;
+    padding: 1.5rem;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.panel h2 {
+    margin-bottom: 1rem;
+    font-size: 18px;
+}
+
+.game-list {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.game-item {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 0.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.game-item.your-turn {
+    background: rgba(46, 204, 113, 0.1);
+    border: 1px solid rgba(46, 204, 113, 0.3);
+}
+
+.game-info h3 {
+    font-size: 16px;
+    margin-bottom: 0.25rem;
+}
+
+.game-info p {
+    font-size: 12px;
+    opacity: 0.8;
+}
+
+.game-area {
+    display: flex;
+    height: calc(100vh - 120px);
+}
+
+.game-sidebar {
+    width: 300px;
+    background: rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(20px);
+    border-right: 1px solid rgba(255, 255, 255, 0.2);
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+}
+
+.game-main {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.game-status {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 15px;
+    margin-bottom: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    text-align: center;
+}
+
+.check-warning {
+    background: rgba(231, 76, 60, 0.2);
+    border: 2px solid #e74c3c;
+    border-radius: 8px;
+    padding: 8px;
+    margin: 8px 0;
+    font-size: 12px;
+    text-align: center;
+    animation: warningPulse 2s infinite;
+}
+
+@keyframes warningPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+.player-list {
+    margin-bottom: 1rem;
+}
+
+.player-list h3 {
+    margin-bottom: 15px;
+}
+
+.player-item {
+    padding: 0.5rem;
+    margin-bottom: 0.25rem;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.player-item.current {
+    background: rgba(46, 204, 113, 0.2);
+    border: 1px solid #2ecc71;
+}
+
+.game-controls {
+    margin-top: auto;
+}
+
+.game-controls .btn {
+    width: 100%;
+    margin-bottom: 10px;
+}
+
+/* HEX BOARD STYLING */
+.hex-board {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    transform: scale(0.8);
+    margin: 20px auto;
+}
+
+.hex-row {
+    display: flex;
+    margin: -6px 0;
+    position: relative;
+    justify-content: center;
+}
+
+.hex-row:nth-child(even) {
+    margin-left: 2px;
+}
+
+.hex-cell {
+    width: 52px;
+    height: 60px;
+    margin: 0 2px;
+    position: relative;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.hex-content {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+}
+
+/* HEX CELL COLORS */
+.hex-cell.pastel-red .hex-content {
+    background: linear-gradient(135deg, #ffb3ba, #ff9999);
+}
+
+.hex-cell.pastel-blue .hex-content {
+    background: linear-gradient(135deg, #bae1ff, #87ceeb);
+}
+
+.hex-cell.pastel-green .hex-content {
+    background: linear-gradient(135deg, #baffc9, #90ee90);
+}
+
+/* HEX CELL STATES */
+.hex-cell:hover {
+    transform: scale(1.05);
+    z-index: 10;
+}
+
+.hex-cell.selected {
+    transform: scale(1.1);
+    z-index: 20;
+}
+
+.hex-cell.selected .hex-content {
+    border: 3px solid #2ecc71;
+    background: rgba(46, 204, 113, 0.2) !important;
+}
+
+.hex-cell.king-in-check {
+    animation: checkPulse 1.5s infinite;
+    z-index: 25;
+}
+
+.hex-cell.king-in-check .hex-content {
+    border: 4px solid #e74c3c !important;
+    background: rgba(231, 76, 60, 0.3) !important;
+}
+
+@keyframes checkPulse {
+    0%, 100% { 
+        transform: scale(1.1);
+        opacity: 1;
+    }
+    50% { 
+        transform: scale(1.25);
+        opacity: 0.7;
+    }
+}
+
+.hex-cell.valid-move {
+    animation: pulseMove 1.2s infinite;
+    z-index: 15;
+}
+
+.hex-cell.valid-move .hex-content {
+    border: 4px solid #2ecc71 !important;
+    background: rgba(46, 204, 113, 0.4) !important;
+}
+
+@keyframes pulseMove {
+    0%, 100% { 
+        transform: scale(1.0);
+        opacity: 1;
+    }
+    50% { 
+        transform: scale(1.15);
+        opacity: 0.8;
+    }
+}
+
+.hex-cell.capture-square {
+    z-index: 16;
+}
+
+.hex-cell.capture-square .hex-content {
+    border: 4px solid #e74c3c !important;
+    background: rgba(231, 76, 60, 0.4) !important;
+    animation: pulseCapture 1.2s infinite;
+}
+
+@keyframes pulseCapture {
+    0%, 100% { 
+        transform: scale(1.0);
+        opacity: 1;
+    }
+    50% { 
+        transform: scale(1.15);
+        opacity: 0.8;
+    }
+}
+
+/* CHESS PIECE STYLING - CLEANED UP AND CONSISTENT */
+.piece {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 5;
+    pointer-events: none;
+    font-size: 48px;
+    font-weight: 900;
+    line-height: 1;
+    text-shadow: 
+        -1px -1px 0 #000,
+        1px -1px 0 #000,
+        -1px 1px 0 #000,
+        1px 1px 0 #000;
+    filter: none;
+    transition: all 0.2s ease;
+    user-select: none;
+    opacity: 1;
+    
+    /* Force consistent font rendering across all devices */
+    font-family: "Segoe UI Symbol", "Noto Color Emoji", "Apple Color Emoji", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* PIECE COLORS - All pieces get consistent color treatment */
+.piece.red-piece {
+    color: #dc143c !important;
+}
+
+.piece.blue-piece {
+    color: #1e90ff !important;
+}
+
+.piece.green-piece {
+    color: #228b22 !important;
+}
+
+.piece.yellow-piece {
+    color: #f1c40f !important;
+}
+
+.piece.purple-piece {
+    color: #9b59b6 !important;
+}
+
+.piece.orange-piece {
+    color: #e67e22 !important;
+}
+
+.piece.black-piece {
+    color: #2c3e50 !important;
+}
+
+/* PIECE HOVER EFFECTS */
+.hex-cell:hover .piece {
+    transform: translate(-50%, -50%) scale(1.15);
+    transition: transform 0.2s ease;
+}
+
+.hex-cell.selected .piece {
+    transform: translate(-50%, -50%) scale(1.2);
+}
+
+/* NOTIFICATIONS */
+.notification {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: rgba(0, 0, 0, 0.9);
+    color: white;
+    padding: 15px 20px;
+    border-radius: 8px;
+    border-left: 4px solid #e74c3c;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    z-index: 1000;
+    transform: translateX(400px);
+    transition: transform 0.3s ease;
+    max-width: 300px;
+}
+
+.notification.show {
+    transform: translateX(0);
+}
+
+.notification.success {
+    border-left-color: #2ecc71;
+}
+
+.notification.info {
+    border-left-color: #3498db;
+}
+
+.notification.warning {
+    border-left-color: #f39c12;
+}
+
+.notification.error {
+    border-left-color: #e74c3c;
+}
+
+.notification-title {
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+.notification-message {
+    font-size: 12px;
+    opacity: 0.9;
+}
+
+/* DEMO PAGE STYLING */
+.piece-nav-btn {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    padding: 8px 4px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+    text-align: center;
+    margin-bottom: 8px;
+}
+
+.piece-nav-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: translateY(-1px);
+}
+
+.piece-nav-btn.active {
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    border-color: #667eea;
+    transform: translateY(-1px);
+}
+
+.piece-desc {
+    display: none;
+    font-size: 13px;
+    line-height: 1.4;
+    margin-top: 20px;
+    padding: 15px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    border-left: 3px solid #667eea;
+}
+
+.piece-desc.active {
+    display: block;
+    background: rgba(102, 126, 234, 0.1);
+    border-left-color: #2ecc71;
+}
+
+.piece-desc h4 {
+    color: #2ecc71;
+    margin-bottom: 8px;
+    font-size: 14px;
+}
+
+/* MOBILE RESPONSIVE DESIGN */
+@media (max-width: 768px) {
+    
+    /* Header adjustments for mobile */
+    .header {
+        padding: 0.5rem 1rem;
+        flex-direction: column;
+        gap: 0.5rem;
+        text-align: center;
+    }
+    
+    .header h1 {
+        font-size: 20px;
+    }
+    
+    .user-info {
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+    
+    .user-info .btn {
+        padding: 6px 12px;
+        font-size: 12px;
+    }
+    
+    /* Container adjustments */
+    .container {
+        margin: 1rem auto;
+        padding: 0 1rem;
+    }
+    
+    /* Lobby layout - stack vertically on mobile */
+    .lobby {
+        grid-template-columns: 1fr;
+        gap: 1rem;
+    }
+    
+    .panel {
+        padding: 1rem;
+    }
+    
+    .panel h2 {
+        font-size: 16px;
+    }
+    
+    /* Form improvements for mobile */
+    .form-row {
+        grid-template-columns: 1fr;
+    }
+    
+    .form-group input, 
+    .form-group select {
+        padding: 12px;
+        font-size: 16px; /* Prevents zoom on iOS */
+        border-radius: 8px;
+    }
+    
+    .form-group label {
+        font-size: 14px;
+    }
+    
+    .btn {
+        padding: 12px 16px;
+        font-size: 14px;
+        min-height: 44px; /* iOS recommended touch target */
+    }
+    
+    /* GAME AREA - Complete mobile redesign */
+    .game-area {
+        flex-direction: column;
+        height: auto;
+        min-height: 100vh;
+    }
+    
+    /* Move sidebar to top on mobile */
+    .game-sidebar {
+        width: 100%;
+        order: 1;
+        background: rgba(255, 255, 255, 0.08);
+        backdrop-filter: blur(20px);
+        border-right: none;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        padding: 15px;
+        display: flex;
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 10px;
+        justify-content: space-between;
+    }
+    
+    /* Game board gets priority space */
+    .game-main {
+        order: 2;
+        flex: 1;
+        padding: 10px;
+        min-height: 60vh;
+    }
+    
+    /* Compact game status */
+    .game-status {
+        flex: 1;
+        min-width: 200px;
+        padding: 10px;
+        margin-bottom: 0;
+        text-align: left;
+    }
+    
+    .game-status h3 {
+        font-size: 14px;
+        margin-bottom: 4px;
+    }
+    
+    .game-status p {
+        font-size: 12px;
+    }
+    
+    /* Collapsible player list */
+    .player-list {
+        flex: 1;
+        min-width: 150px;
+        margin-bottom: 0;
+    }
+    
+    .player-list h3 {
+        font-size: 14px;
+        margin-bottom: 8px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    
+    .player-list h3::after {
+        content: "▼";
+        font-size: 12px;
+        transition: transform 0.3s ease;
+    }
+    
+    .player-list.collapsed h3::after {
+        transform: rotate(-90deg);
+    }
+    
+    .player-list.collapsed #playerList {
+        display: none;
+    }
+    
+    .player-item {
+        padding: 6px;
+        margin-bottom: 4px;
+        font-size: 12px;
+    }
+    
+    /* Compact game controls */
+    .game-controls {
+        width: 100%;
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+    
+    .game-controls .btn {
+        flex: 1;
+        min-width: 100px;
+        padding: 8px 12px;
+        font-size: 12px;
+        margin-bottom: 0 !important;
+    }
+    
+    /* Enhanced hex board for mobile */
+    .hex-board {
+        transform: scale(0.75);
+        margin: 10px auto;
+    }
+    
+    /* Larger touch targets for mobile */
+    .hex-cell {
+        piece-size: 52px;
+        width: 56px;
+        height: 64px;
+        margin: 0 3px;
+    }
+    
+ 
+    /* Mobile piece fixes - consistent with desktop approach */
+.piece {
+    font-size: 0 !important; /* Hide text content on mobile too */
+}
+/* Apply larger size to pseudo-element only */
+
+.piece::before {
+    font-size: 52px !important;
+    text-shadow: 
+        -2px -2px 0 #000,
+        2px -2px 0 #000,
+        -2px 2px 0 #000,
+        2px 2px 0 #000,
+        0 0 4px rgba(0, 0, 0, 0.5);
+}
+
+    /* Mobile notification adjustments */
+    .notification {
+        top: 10px;
+        right: 10px;
+        left: 10px;
+        max-width: none;
+        transform: translateY(-100px);
+    }
+    
+    .notification.show {
+        transform: translateY(0);
+    }
+    
+    /* Demo page mobile improvements */
+    .piece-nav-btn {
+        padding: 10px 6px;
+        font-size: 12px;
+        margin-bottom: 6px;
+    }
+    
+    .piece-desc {
+        font-size: 12px;
+        padding: 12px;
+    }
+    
+    /* Auth container mobile adjustments */
+    .auth-container {
+        margin: 2rem auto;
+        padding: 1.5rem;
+    }
+    
+    /* Game list mobile improvements */
+    .game-list {
+        max-height: 300px;
+    }
+    
+    .game-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+    
+    .game-info h3 {
+        font-size: 14px;
+    }
+    
+    .game-info p {
+        font-size: 11px;
+    }
+}
+
+/* Portrait orientation specific adjustments */
+@media (max-width: 768px) and (orientation: portrait) {
+    .game-main {
+        min-height: 50vh;
+    }
+    
+    .hex-board {
+        transform: scale(0.7);
+    }
+}
+
+/* Landscape mobile adjustments */
+@media (max-width: 768px) and (orientation: landscape) {
+    .game-area {
+        flex-direction: row;
+    }
+    
+    .game-sidebar {
+        width: 250px;
+        order: 1;
+        flex-direction: column;
+        border-right: 1px solid rgba(255, 255, 255, 0.2);
+        border-bottom: none;
+    }
+    
+    .game-main {
+        order: 2;
+    }
+    
+    .hex-board {
+        transform: scale(0.8);
+    }
+}
+
+/* Very small screens (iPhone SE, etc.) */
+@media (max-width: 375px) {
+    .header {
+        padding: 0.5rem;
+    }
+    
+    .container {
+        padding: 0 0.5rem;
+    }
+    
+    .hex-board {
+        transform: scale(0.6);
+    }
+    
+    .hex-cell {
+        piece-size: 48px;
+        width: 48px;
+        height: 56px;
+    }
+    
+    .piece {
+        font-size: 48px;
+    }
+    
+    .game-sidebar {
+        padding: 10px;
+        gap: 8px;
+    }
+    
+    .game-controls .btn {
+        min-width: 80px;
+        padding: 6px 10px;
+        font-size: 11px;
+    }
+}
+
+/* Ensure pieces display correctly on high-DPI mobile screens */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+    .piece {
+        text-rendering: optimizeLegibility;
+        -webkit-font-feature-settings: "liga" 1;
+        font-feature-settings: "liga" 1;
+    }
+}
+
+/* CSS PATCH - Add this to the END of your styles.css to fix doubling */
+
+/* Hide any text content inside pieces - only show ::before pseudo-elements */
+.piece {
+    font-size: 0 !important; /* Hide any text content */
+}
+
+/* REPLACE your piece section with this - solid pieces with proper Unicode rendering */
+
+.piece::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    display: block;
+    font-size: 48px;
+    font-weight: 900;
+    line-height: 1;
+    text-shadow: 
+        -1px -1px 0 #000,
+        1px -1px 0 #000,
+        -1px 1px 0 #000,
+        1px 1px 0 #000;
+    
+    /* Enhanced Unicode rendering for chess pieces */
+    font-family: "Segoe UI Symbol", "Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji", "Arial Unicode MS", "Lucida Sans Unicode", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-variant: normal;
+    font-synthesis: none;
+    -webkit-font-feature-settings: "liga" 1;
+    font-feature-settings: "liga" 1;
+}
+
+/* SOLID pieces for ALL players - simpler and more consistent */
+.piece[data-piece="king"]::before { content: "♚"; }
+.piece[data-piece="queen"]::before { content: "♛"; }
+.piece[data-piece="rook"]::before { content: "♜"; }
+.piece[data-piece="bishop"]::before { content: "♝"; }
+.piece[data-piece="knight"]::before { content: "♞"; }
+.piece[data-piece="pawn"]::before { content: "♟"; }
+
+/* Force Unicode display - important for pawn rendering */
+.piece[data-piece="pawn"]::before {
+    content: "♟";
+    font-variant-emoji: text; /* Force text rendering instead of emoji */
+    -webkit-font-variant-ligatures: none;
+    font-variant-ligatures: none;
+}
+
+/* Colors for all players */
+.piece.red-piece::before {
+    color: #dc143c !important;
+}
+
+.piece.blue-piece::before {
+    color: #1e90ff !important;
+}
+
+.piece.black-piece::before {
+    color: #2c3e50 !important;
+}
+
+.piece.green-piece::before {
+    color: #228b22 !important;
+}
+
+.piece.yellow-piece::before {
+    color: #f1c40f !important;
+}
+
+.piece.purple-piece::before {
+    color: #9b59b6 !important;
+}
+
+.piece.orange-piece::before {
+    color: #e67e22 !important;
+}
+
+/* Mobile font adjustments */
+@media (max-width: 768px) {
+    .piece::before {
+        font-size: 52px !important;
+    }
+}
+
+@media (max-width: 375px) {
+    .piece::before {
+        font-size: 48px !important;
+    }
+}
+
+/* === HEX CHESS: final piece fixes (place at the very end) === */
+
+/* Size the glyph relative to the hex so it stays inside */
+.hex-cell { --piece-size: 40px; }          /* tweak to taste */
+
+/* Hide any literal text inside .piece; we draw with ::before only */
+.piece { font-size: 0 !important; }
+
+/* Draw the chess symbol with a MONOCHROME font (no color-emoji) */
+.piece::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: block;
+
+  font-size: var(--piece-size);
+  font-weight: 900;
+  line-height: 1;
+
+  /* IMPORTANT: exclude Apple/Noto Color Emoji so color: works */
+  font-family: "Segoe UI Symbol", "DejaVu Sans",
+               "Arial Unicode MS", "Lucida Sans Unicode",
+               sans-serif !important;
+
+  font-variant-emoji: text;          /* force text presentation */
+  -webkit-font-variant-ligatures: none;
+  font-variant-ligatures: none;
+
+  text-shadow:
+    -1px -1px 0 #000,
+     1px -1px 0 #000,
+    -1px  1px 0 #000,
+     1px  1px 0 #000;
+}
+
+/* Map types to symbols (monochrome code points) */
+.piece[data-piece="king"]::before   { content: "♚"; }
+.piece[data-piece="queen"]::before  { content: "♛"; }
+.piece[data-piece="rook"]::before   { content: "♜"; }
+.piece[data-piece="bishop"]::before { content: "♝"; }
+.piece[data-piece="knight"]::before { content: "♞"; }
+.piece[data-piece="pawn"]::before   { content: "♟"; }
+
+/* Team colors (now these will apply to pawns, too) */
+.piece.red-piece::before    { color: #dc143c !important; }
+.piece.blue-piece::before   { color: #1e90ff !important; }
+.piece.green-piece::before  { color: #228b22 !important; }
+.piece.yellow-piece::before { color: #f1c40f !important; }
+.piece.purple-piece::before { color: #9b59b6 !important; }
+.piece.orange-piece::before { color: #e67e22 !important; }
+.piece.black-piece::before  { color: #2c3e50 !important; }
+
+/* Tamer hover so glyph stays within the hex */
+.hex-cell:hover .piece    { transform: translate(-50%, -50%) scale(1.05); }
+.hex-cell.selected .piece { transform: translate(-50%, -50%) scale(1.08); }
+
+/* QUICK MOBILE FIX - Place at end of file */
+@media screen and (max-width: 768px) {
+    .piece { font-size: 0 !important; }
+    .piece::before { font-size: 50px !important; }
+    
+    .piece[data-piece="pawn"]::before { content: "♟" !important; }
+    .piece.red-piece::before { color: #dc143c !important; }
+    .piece.blue-piece::before { color: #1e90ff !important; }
+}
+
+/*        */
+
+/* ========================================
+   MOBILE CHESS PIECE COLOR FIX
+   Place this at the END of your styles.css
+   ======================================== */
+
+/* STEP 1: Force text rendering, not emoji rendering */
+.piece {
+    font-size: 0 !important;
+    /* Prevent any text selection issues */
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+}
+
+.piece::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    display: block;
+    
+    font-size: 48px;
+    font-weight: 900;
+    line-height: 1;
+    
+    /* CRITICAL: Exclude color emoji fonts for mobile */
+    font-family: 
+        "Segoe UI Symbol",
+        "DejaVu Sans", 
+        "Arial Unicode MS", 
+        "Lucida Sans Unicode",
+        "Times New Roman",
+        serif !important;
+    
+    /* Force text presentation instead of emoji */
+    font-variant-emoji: text !important;
+    -webkit-font-variant-emoji: text !important;
+    font-feature-settings: "emoji" 0 !important;
+    -webkit-font-feature-settings: "emoji" 0 !important;
+    
+    /* Disable ligatures that might trigger emoji */
+    font-variant-ligatures: none !important;
+    -webkit-font-variant-ligatures: none !important;
+    
+    /* Enhanced text rendering */
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    
+    /* Strong text shadow for visibility */
+    text-shadow: 
+        -1px -1px 0 #000,
+         1px -1px 0 #000,
+        -1px  1px 0 #000,
+         1px  1px 0 #000,
+         0 0 2px rgba(0,0,0,0.8);
+}
+
+/* STEP 2: Piece type mapping with high specificity */
+.piece[data-piece="king"]::before   { content: "♚" !important; }
+.piece[data-piece="queen"]::before  { content: "♛" !important; }
+.piece[data-piece="rook"]::before   { content: "♜" !important; }
+.piece[data-piece="bishop"]::before { content: "♝" !important; }
+.piece[data-piece="knight"]::before { content: "♞" !important; }
+.piece[data-piece="pawn"]::before   { content: "♟" !important; }
+
+/* STEP 3: Team colors with maximum specificity */
+.hex-cell .piece.red-piece::before    { color: #dc143c !important; }
+.hex-cell .piece.blue-piece::before   { color: #1e90ff !important; }
+.hex-cell .piece.green-piece::before  { color: #228b22 !important; }
+.hex-cell .piece.yellow-piece::before { color: #f1c40f !important; }
+.hex-cell .piece.purple-piece::before { color: #9b59b6 !important; }
+.hex-cell .piece.orange-piece::before { color: #e67e22 !important; }
+.hex-cell .piece.black-piece::before  { color: #2c3e50 !important; }
+
+/* STEP 4: Mobile-specific overrides */
+@media screen and (max-width: 768px) {
+    .piece::before {
+        /* Larger size for mobile touch targets */
+        font-size: 52px !important;
+        
+        /* Even more restrictive font stack for mobile */
+        font-family: 
+            "Segoe UI Symbol",
+            "Arial Unicode MS",
+            "Lucida Sans Unicode",
+            monospace !important;
+        
+        /* Force text rendering on mobile browsers */
+        font-variant-emoji: text !important;
+        -webkit-font-variant-emoji: text !important;
+        
+        /* Stronger text shadow for mobile visibility */
+        text-shadow: 
+            -2px -2px 0 #000,
+             2px -2px 0 #000,
+            -2px  2px 0 #000,
+             2px  2px 0 #000,
+             0 0 4px rgba(0,0,0,0.9) !important;
+    }
+    
+    /* Extra specific mobile color rules */
+    .hex-cell .hex-content .piece.red-piece::before    { color: #dc143c !important; }
+    .hex-cell .hex-content .piece.blue-piece::before   { color: #1e90ff !important; }
+    .hex-cell .hex-content .piece.green-piece::before  { color: #228b22 !important; }
+    .hex-cell .hex-content .piece.yellow-piece::before { color: #f1c40f !important; }
+    .hex-cell .hex-content .piece.purple-piece::before { color: #9b59b6 !important; }
+    .hex-cell .hex-content .piece.orange-piece::before { color: #e67e22 !important; }
+    .hex-cell .hex-content .piece.black-piece::before  { color: #2c3e50 !important; }
+}
+
+/* STEP 5: iOS Safari specific fixes */
+@supports (-webkit-touch-callout: none) {
+    .piece::before {
+        /* iOS Safari font stack */
+        font-family: 
+            "Helvetica Neue",
+            "Arial Unicode MS",
+            "Lucida Grande",
+            sans-serif !important;
+        
+        /* Force text rendering on iOS */
+        -webkit-font-variant-emoji: text !important;
+        font-variant-emoji: text !important;
+        -webkit-text-stroke: 0.5px rgba(0,0,0,0.3);
+    }
+}
+
+/* STEP 6: Android Chrome specific fixes */
+@media screen and (-webkit-min-device-pixel-ratio: 0) and (min-resolution: .001dpcm) {
+    .piece::before {
+        /* Android Chrome font handling */
+        font-family: 
+            "Roboto",
+            "Droid Sans",
+            "Arial Unicode MS",
+            sans-serif !important;
+        
+        /* Enhanced rendering for Android */
+        text-rendering: optimizeLegibility !important;
+        -webkit-font-smoothing: subpixel-antialiased !important;
+    }
+}
+
+/* STEP 7: Fallback for very problematic devices */
+@media screen and (max-width: 480px) {
+    /* Alternative approach: use background images if CSS fails */
+    .piece[data-piece="pawn"].red-piece::before {
+        content: "●" !important; /* Fallback to simple colored circle */
+        color: #dc143c !important;
+        font-size: 36px !important;
+    }
+    
+    .piece[data-piece="pawn"].blue-piece::before {
+        content: "●" !important;
+        color: #1e90ff !important;
+        font-size: 36px !important;
+    }
+    
+    /* Add similar fallbacks for other colors if needed */
+}
+
+/* STEP 8: High contrast mode compatibility */
+@media (prefers-contrast: high) {
+    .piece::before {
+        text-shadow: 
+            -2px -2px 0 #000,
+             2px -2px 0 #000,
+            -2px  2px 0 #000,
+             2px  2px 0 #000,
+             0 0 6px #000 !important;
+    }
+    
+    .hex-cell .piece.red-piece::before    { color: #ff0000 !important; }
+    .hex-cell .piece.blue-piece::before   { color: #0000ff !important; }
+    .hex-cell .piece.green-piece::before  { color: #008000 !important; }
+}
+
+/* STEP 9: Debug helpers (remove in production) */
+/*
+.piece::before {
+    border: 1px solid red !important;
+    background: rgba(255,255,0,0.3) !important;
+}
+*/
+
+/* ========================================
+   MOBILE CHESS PIECE COLOR FIX
+   Place this at the END of your styles.css
+   ======================================== */
+
+/* STEP 1: Force text rendering, not emoji rendering */
+.piece {
+    font-size: 0 !important;
+    /* Prevent any text selection issues */
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+}
+
+.piece::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    display: block;
+    
+    font-size: 48px;
+    font-weight: 900;
+    line-height: 1;
+    
+    /* CRITICAL: Exclude color emoji fonts for mobile */
+    font-family: 
+        "Segoe UI Symbol",
+        "DejaVu Sans", 
+        "Arial Unicode MS", 
+        "Lucida Sans Unicode",
+        "Times New Roman",
+        serif !important;
+    
+    /* Force text presentation instead of emoji */
+    font-variant-emoji: text !important;
+    -webkit-font-variant-emoji: text !important;
+    font-feature-settings: "emoji" 0 !important;
+    -webkit-font-feature-settings: "emoji" 0 !important;
+    
+    /* Disable ligatures that might trigger emoji */
+    font-variant-ligatures: none !important;
+    -webkit-font-variant-ligatures: none !important;
+    
+    /* Enhanced text rendering */
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    
+    /* Strong text shadow for visibility */
+    text-shadow: 
+        -1px -1px 0 #000,
+         1px -1px 0 #000,
+        -1px  1px 0 #000,
+         1px  1px 0 #000,
+         0 0 2px rgba(0,0,0,0.8);
+}
+
+/* STEP 2: Piece type mapping with high specificity */
+.piece[data-piece="king"]::before   { content: "♚" !important; }
+.piece[data-piece="queen"]::before  { content: "♛" !important; }
+.piece[data-piece="rook"]::before   { content: "♜" !important; }
+.piece[data-piece="bishop"]::before { content: "♝" !important; }
+.piece[data-piece="knight"]::before { content: "♞" !important; }
+.piece[data-piece="pawn"]::before   { content: "♟" !important; }
+
+/* STEP 3: Team colors with maximum specificity */
+.hex-cell .piece.red-piece::before    { color: #dc143c !important; }
+.hex-cell .piece.blue-piece::before   { color: #1e90ff !important; }
+.hex-cell .piece.green-piece::before  { color: #228b22 !important; }
+.hex-cell .piece.yellow-piece::before { color: #f1c40f !important; }
+.hex-cell .piece.purple-piece::before { color: #9b59b6 !important; }
+.hex-cell .piece.orange-piece::before { color: #e67e22 !important; }
+.hex-cell .piece.black-piece::before  { color: #2c3e50 !important; }
+
+/* STEP 4: Mobile-specific overrides */
+@media screen and (max-width: 768px) {
+    .piece::before {
+        /* Larger size for mobile touch targets */
+        font-size: 52px !important;
+        
+        /* Even more restrictive font stack for mobile */
+        font-family: 
+            "Segoe UI Symbol",
+            "Arial Unicode MS",
+            "Lucida Sans Unicode",
+            monospace !important;
+        
+        /* Force text rendering on mobile browsers */
+        font-variant-emoji: text !important;
+        -webkit-font-variant-emoji: text !important;
+        
+        /* Stronger text shadow for mobile visibility */
+        text-shadow: 
+            -2px -2px 0 #000,
+             2px -2px 0 #000,
+            -2px  2px 0 #000,
+             2px  2px 0 #000,
+             0 0 4px rgba(0,0,0,0.9) !important;
+    }
+    
+    /* Extra specific mobile color rules */
+    .hex-cell .hex-content .piece.red-piece::before    { color: #dc143c !important; }
+    .hex-cell .hex-content .piece.blue-piece::before   { color: #1e90ff !important; }
+    .hex-cell .hex-content .piece.green-piece::before  { color: #228b22 !important; }
+    .hex-cell .hex-content .piece.yellow-piece::before { color: #f1c40f !important; }
+    .hex-cell .hex-content .piece.purple-piece::before { color: #9b59b6 !important; }
+    .hex-cell .hex-content .piece.orange-piece::before { color: #e67e22 !important; }
+    .hex-cell .hex-content .piece.black-piece::before  { color: #2c3e50 !important; }
+}
+
+/* STEP 5: iOS Safari specific fixes */
+@supports (-webkit-touch-callout: none) {
+    .piece::before {
+        /* iOS Safari font stack */
+        font-family: 
+            "Helvetica Neue",
+            "Arial Unicode MS",
+            "Lucida Grande",
+            sans-serif !important;
+        
+        /* Force text rendering on iOS */
+        -webkit-font-variant-emoji: text !important;
+        font-variant-emoji: text !important;
+        -webkit-text-stroke: 0.5px rgba(0,0,0,0.3);
+    }
+}
+
+/* STEP 6: Android Chrome specific fixes */
+@media screen and (-webkit-min-device-pixel-ratio: 0) and (min-resolution: .001dpcm) {
+    .piece::before {
+        /* Android Chrome font handling */
+        font-family: 
+            "Roboto",
+            "Droid Sans",
+            "Arial Unicode MS",
+            sans-serif !important;
+        
+        /* Enhanced rendering for Android */
+        text-rendering: optimizeLegibility !important;
+        -webkit-font-smoothing: subpixel-antialiased !important;
+    }
+}
+
+/* STEP 7: Fallback for very problematic devices */
+
+
+/* STEP 8: High contrast mode compatibility */
+@media (prefers-contrast: high) {
+    .piece::before {
+        text-shadow: 
+            -2px -2px 0 #000,
+             2px -2px 0 #000,
+            -2px  2px 0 #000,
+             2px  2px 0 #000,
+             0 0 6px #000 !important;
+    }
+    
+    .hex-cell .piece.red-piece::before    { color: #ff0000 !important; }
+    .hex-cell .piece.blue-piece::before   { color: #0000ff !important; }
+    .hex-cell .piece.green-piece::before  { color: #008000 !important; }
+}
+
+/* STEP 9: Debug helpers (remove in production) */
+/*
+.piece::before {
+    border: 1px solid red !important;
+    background: rgba(255,255,0,0.3) !important;
+}
+*/
+
+/* GREEN TEAM PAWN FIX - Add this to end of your CSS */
+/* This adds the missing green team to the circle fallback */
+
+@media screen and (max-width: 480px) {
+    /* Add green team circle fallback (was missing!) */
+    .piece[data-piece="pawn"].green-piece::before {
+        content: "●" !important;
+        color: #228b22 !important;
+        font-size: 36px !important;
+    }
+    
+    /* Add other missing teams while we're at it */
+    .piece[data-piece="pawn"].yellow-piece::before {
+        content: "●" !important;
+        color: #f1c40f !important;
+        font-size: 36px !important;
+    }
+    
+    .piece[data-piece="pawn"].purple-piece::before {
+        content: "●" !important;
+        color: #9b59b6 !important;
+        font-size: 36px !important;
+    }
+    
+    .piece[data-piece="pawn"].orange-piece::before {
+        content: "●" !important;
+        color: #e67e22 !important;
+        font-size: 36px !important;
+    }
+}
+
+/* Also add general fallback for all screen sizes */
+.piece[data-piece="pawn"].green-piece::before {
+    color: #228b22 !important;
+}
+
+.piece[data-piece="pawn"].yellow-piece::before {
+    color: #f1c40f !important;
+}
+
+.piece[data-piece="pawn"].purple-piece::before {
+    color: #9b59b6 !important;
+}
+
+.piece[data-piece="pawn"].orange-piece::before {
+    color: #e67e22 !important;
+}
+
+/* ========================================
+   ORIENTATION-RESISTANT PAWN COLOR FIX
+   Place this at the VERY END of your CSS
+   ======================================== */
+
+/* High-specificity fix that works in ALL orientations */
+html body .game-area .game-main .hex-board .hex-row .hex-cell .hex-content .piece[data-piece="pawn"]::before,
+html body .game-area .game-main .hex-board .hex-row .hex-cell .piece[data-piece="pawn"]::before,
+html body .hex-board .hex-row .hex-cell .hex-content .piece[data-piece="pawn"]::before {
+    content: "●" !important;
+    font-family: "Segoe UI Symbol", "Arial Unicode MS", sans-serif !important;
+    font-size: 36px !important;
+    position: absolute !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    text-shadow: 
+        -2px -2px 0 #000,
+         2px -2px 0 #000,
+        -2px  2px 0 #000,
+         2px  2px 0 #000 !important;
+}
+
+/* Color fixes with maximum specificity for ALL orientations */
+html body .game-area .game-main .hex-board .hex-row .hex-cell .hex-content .piece[data-piece="pawn"].red-piece::before,
+html body .game-area .game-main .hex-board .hex-row .hex-cell .piece[data-piece="pawn"].red-piece::before,
+html body .hex-board .hex-row .hex-cell .hex-content .piece[data-piece="pawn"].red-piece::before {
+    content: "●" !important;
+    color: #dc143c !important;
+}
+
+html body .game-area .game-main .hex-board .hex-row .hex-cell .hex-content .piece[data-piece="pawn"].blue-piece::before,
+html body .game-area .game-main .hex-board .hex-row .hex-cell .piece[data-piece="pawn"].blue-piece::before,
+html body .hex-board .hex-row .hex-cell .hex-content .piece[data-piece="pawn"].blue-piece::before {
+    content: "●" !important;
+    color: #1e90ff !important;
+}
+
+html body .game-area .game-main .hex-board .hex-row .hex-cell .hex-content .piece[data-piece="pawn"].green-piece::before,
+html body .game-area .game-main .hex-board .hex-row .hex-cell .piece[data-piece="pawn"].green-piece::before,
+html body .hex-board .hex-row .hex-cell .hex-content .piece[data-piece="pawn"].green-piece::before {
+    content: "●" !important;
+    color: #228b22 !important;
+}
+
+html body .game-area .game-main .hex-board .hex-row .hex-cell .hex-content .piece[data-piece="pawn"].yellow-piece::before,
+html body .game-area .game-main .hex-board .hex-row .hex-cell .piece[data-piece="pawn"].yellow-piece::before,
+html body .hex-board .hex-row .hex-cell .hex-content .piece[data-piece="pawn"].yellow-piece::before {
+    content: "●" !important;
+    color: #f1c40f !important;
+}
+
+html body .game-area .game-main .hex-board .hex-row .hex-cell .hex-content .piece[data-piece="pawn"].purple-piece::before,
+html body .game-area .game-main .hex-board .hex-row .hex-cell .piece[data-piece="pawn"].purple-piece::before,
+html body .hex-board .hex-row .hex-cell .hex-content .piece[data-piece="pawn"].purple-piece::before {
+    content: "●" !important;
+    color: #9b59b6 !important;
+}
+
+html body .game-area .game-main .hex-board .hex-row .hex-cell .hex-content .piece[data-piece="pawn"].orange-piece::before,
+html body .game-area .game-main .hex-board .hex-row .hex-cell .piece[data-piece="pawn"].orange-piece::before,
+html body .hex-board .hex-row .hex-cell .hex-content .piece[data-piece="pawn"].orange-piece::before {
+    content: "●" !important;
+    color: #e67e22 !important;
+}
+
+/* Portrait AND Landscape specific overrides */
+@media screen and (max-width: 768px) and (orientation: portrait) {
+    html body .piece[data-piece="pawn"]::before {
+        content: "●" !important;
+        font-size: 36px !important;
+    }
+    
+    html body .piece[data-piece="pawn"].red-piece::before    { color: #dc143c !important; }
+    html body .piece[data-piece="pawn"].blue-piece::before   { color: #1e90ff !important; }
+    html body .piece[data-piece="pawn"].green-piece::before  { color: #228b22 !important; }
+    html body .piece[data-piece="pawn"].yellow-piece::before { color: #f1c40f !important; }
+    html body .piece[data-piece="pawn"].purple-piece::before { color: #9b59b6 !important; }
+    html body .piece[data-piece="pawn"].orange-piece::before { color: #e67e22 !important; }
+}
+
+@media screen and (max-width: 768px) and (orientation: landscape) {
+    html body .piece[data-piece="pawn"]::before {
+        content: "●" !important;
+        font-size: 32px !important;
+    }
+    
+    html body .piece[data-piece="pawn"].red-piece::before    { color: #dc143c !important; }
+    html body .piece[data-piece="pawn"].blue-piece::before   { color: #1e90ff !important; }
+    html body .piece[data-piece="pawn"].green-piece::before  { color: #228b22 !important; }
+    html body .piece[data-piece="pawn"].yellow-piece::before { color: #f1c40f !important; }
+    html body .piece[data-piece="pawn"].purple-piece::before { color: #9b59b6 !important; }
+    html body .piece[data-piece="pawn"].orange-piece::before { color: #e67e22 !important; }
+}
+
+/* iOS Safari specific orientation fix */
+@supports (-webkit-touch-callout: none) {
+    @media screen and (orientation: landscape) {
+        html body .piece[data-piece="pawn"]::before {
+            content: "●" !important;
+            font-family: "Helvetica Neue", "Arial Unicode MS", sans-serif !important;
+        }
+        
+        html body .piece[data-piece="pawn"].green-piece::before {
+            color: #228b22 !important;
+            content: "●" !important;
+        }
+    }
+}
+
+/* Nuclear option: Force via CSS custom properties */
+.piece[data-piece="pawn"].green-piece {
+    --pawn-color: #228b22;
+}
+
+.piece[data-piece="pawn"].red-piece {
+    --pawn-color: #dc143c;
+}
+
+.piece[data-piece="pawn"].blue-piece {
+    --pawn-color: #1e90ff;
+}
+
+.piece[data-piece="pawn"]::before {
+    color: var(--pawn-color, #000) !important;
+}
+
+/* Mobile-only pawn color fix - surgical approach */
+@media (max-width: 768px) {
+    .piece[data-piece="pawn"]::before {
+        content: "●" !important;
+        font-family: "Arial", sans-serif !important;
+        font-size: 36px !important;
+    }
+    
+    .piece[data-piece="pawn"].red-piece::before { color: #dc143c !important; }
+    .piece[data-piece="pawn"].blue-piece::before { color: #1e90ff !important; }
+    .piece[data-piece="pawn"].green-piece::before { color: #228b22 !important; }
+    .piece[data-piece="pawn"].yellow-piece::before { color: #f1c40f !important; }
+    .piece[data-piece="pawn"].purple-piece::before { color: #9b59b6 !important; }
+    .piece[data-piece="pawn"].orange-piece::before { color: #e67e22 !important; }
+}
+@media (max-width: 768px) {
+    .hex-board {
+        /*
+        border: 5px solid red !important;
+*/
+    }
+}    
+
+/* Force mobile browsers to render pawns as colored text, not black emoji */
+
+@media (max-width: 768px) {
+    .piece[data-piece="pawn"]::before {
+        font-variant-emoji: text !important;
+        font-feature-settings: "emoji" 0 !important;
+        font-family: "Times New Roman", "Arial Unicode MS", serif !important;
+    }
+}
+
+
+/* Override all circle-forcing rules with pawn symbols */
+
+@media (max-width: 768px) {
+    .piece[data-piece="pawn"]::before,
+    html body .piece[data-piece="pawn"]::before,
+    html body .game-area .piece[data-piece="pawn"]::before,
+    html body .hex-board .piece[data-piece="pawn"]::before {
+        content: "♟" !important;
+        font-variant-emoji: text !important;
+        font-feature-settings: "emoji" 0 !important;
+        font-family: "Times New Roman", "Arial Unicode MS", serif !important;
+        font-size: 40px !important;
+    }
+}

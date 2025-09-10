@@ -1,0 +1,2653 @@
+console.log('🚀 COMPLETE game.js loaded');
+
+// Global variables
+let selectedHex = null;
+let gameOverDetected = false;
+
+// Auth functions
+function showAuth(type) {
+    document.getElementById('loginForm').style.display = type === 'login' ? 'block' : 'none';
+    document.getElementById('registerForm').style.display = type === 'register' ? 'block' : 'none';
+}
+
+function login(event) {
+    event.preventDefault();
+    const form = event.target;
+    const formData = new FormData(form);
+    formData.append('action', 'login');
+    
+    fetch(window.location.href, {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            showNotification('Login Failed', data.error, 'error');
+        }
+    });
+}
+
+function register(event) {
+    event.preventDefault();
+    const form = event.target;
+    const formData = new FormData(form);
+    formData.append('action', 'register');
+    
+    fetch(window.location.href, {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            showNotification('Registration Failed', data.error, 'error');
+        }
+    });
+}
+
+function logout() {
+    fetch(window.location.href, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: 'action=logout'
+    })
+    .then(() => location.reload());
+}
+
+
+// Game creation
+function createGame(event) {
+    event.preventDefault();
+    const form = event.target;
+    const formData = new FormData(form);
+    formData.append('action', 'create_game');
+    
+    fetch(window.location.href, {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            window.location.href = `?page=game&id=${data.game_id}`;
+        } else {
+            showNotification('Failed to Create Game', data.error, 'error');
+        }
+    });
+}
+
+class GameTypeManager {
+    static createGame(gameType, config) {
+        switch(gameType) {
+            case 'hotseat':
+                return new EnhancedHotseatGame(config);
+            case 'online':
+                return new OnlineGame(config);
+            case 'vs_ai':
+                return new AIGame(config);
+        }
+    }
+}
+
+//
+/**
+ * Enhanced Multi-Player Hotseat Game System
+ * Supports 2-6 players with dynamic board sizing and starting positions
+ */
+
+class EnhancedHotseatGame {
+    constructor(playerCount = 2, boardSize = 'medium') {
+        this.gameMode = 'hotseat';
+        this.playerCount = playerCount;
+        this.boardSize = boardSize;
+        this.players = this.initializePlayers(playerCount);
+        this.currentPlayerIndex = 0;
+        this.gameState = 'active';
+        this.moveHistory = [];
+        this.boardConfig = this.getBoardConfig(boardSize);
+        this.startingPositions = this.calculateStartingPositions(playerCount);
+        
+        console.log(`🎮 Initialized ${playerCount}-player hotseat game on ${boardSize} board`);
+        console.log('Starting positions:', this.startingPositions);
+    }
+    
+    /**
+     * Initialize players with colors and starting positions
+     */
+    initializePlayers(count) {
+        const playerConfigs = [
+            { name: 'Red Player', color: 'red', cssClass: 'player-red' },
+            { name: 'Blue Player', color: 'blue', cssClass: 'player-blue' },
+            { name: 'Green Player', color: 'green', cssClass: 'player-green' },
+            { name: 'Yellow Player', color: 'yellow', cssClass: 'player-yellow' },
+            { name: 'Purple Player', color: 'purple', cssClass: 'player-purple' },
+            { name: 'Orange Player', color: 'orange', cssClass: 'player-orange' }
+        ];
+        
+        const players = [];
+        for (let i = 0; i < count; i++) {
+            const config = playerConfigs[i];
+            players.push({
+                id: i,
+                name: config.name,
+                color: config.color,
+                cssClass: config.cssClass,
+                isHuman: true,
+                isLocal: true,
+                isEliminated: false,
+                startingCorner: this.getPlayerStartingCorner(i, count)
+            });
+        }
+        
+        return players;
+    }
+    
+    /**
+     * Get board configuration based on size
+     */
+    getBoardConfig(size) {
+        const configs = {
+            small: {
+                radius: 4,
+                maxPlayers: 3,
+                name: 'Small Board',
+                description: 'Best for 2-3 players'
+            },
+            medium: {
+                radius: 6,
+                maxPlayers: 4,
+                name: 'Medium Board', 
+                description: 'Best for 2-4 players'
+            },
+            large: {
+                radius: 8,
+                maxPlayers: 6,
+                name: 'Large Board',
+                description: 'Best for 2-6 players'
+            }
+        };
+        
+        return configs[size] || configs.medium;
+    }
+    
+    /**
+     * Calculate starting positions for each player count
+     */
+    calculateStartingPositions(playerCount) {
+        // Hex board has 6 corners at positions (in cube coordinates):
+        // Corner 0: (radius, 0, -radius)      - Top Right
+        // Corner 1: (0, radius, -radius)      - Top Left  
+        // Corner 2: (-radius, radius, 0)      - Left
+        // Corner 3: (-radius, 0, radius)      - Bottom Left
+        // Corner 4: (0, -radius, radius)      - Bottom Right
+        // Corner 5: (radius, -radius, 0)      - Right
+        
+        const radius = this.boardConfig.radius;
+        const allCorners = [
+            { q: radius, r: -radius, name: 'Top Right' },      // 0
+            { q: 0, r: radius, name: 'Top Left' },             // 1
+            { q: -radius, r: radius, name: 'Left' },           // 2
+            { q: -radius, r: 0, name: 'Bottom Left' },         // 3
+            { q: 0, r: -radius, name: 'Bottom Right' },        // 4
+            { q: radius, r: 0, name: 'Right' }                 // 5
+        ];
+        
+        // Distribute players optimally based on count
+        const playerPositions = [];
+        
+        switch (playerCount) {
+            case 2:
+                // Opposite corners for maximum distance
+                playerPositions.push(allCorners[0], allCorners[3]); // Top Right, Bottom Left
+                break;
+                
+            case 3:
+                // Every other corner for even spacing
+                playerPositions.push(allCorners[0], allCorners[2], allCorners[4]); // Top Right, Left, Bottom Right
+                break;
+                
+            case 4:
+                // Four corners, leaving two opposite corners empty
+                playerPositions.push(allCorners[0], allCorners[1], allCorners[3], allCorners[4]); // Skip Left and Right
+                break;
+                
+            case 5:
+                // Five corners, one empty (asymmetric but fair)
+                playerPositions.push(allCorners[0], allCorners[1], allCorners[2], allCorners[3], allCorners[4]); // Skip Right corner
+                break;
+                
+            case 6:
+                // All corners
+                playerPositions.push(...allCorners);
+                break;
+                
+            default:
+                throw new Error(`Unsupported player count: ${playerCount}`);
+        }
+        
+        return playerPositions;
+    }
+    
+    /**
+     * Get starting corner index for a player
+     */
+    getPlayerStartingCorner(playerIndex, playerCount) {
+        const positionMaps = {
+            2: [0, 3],           // Opposite corners
+            3: [0, 2, 4],        // Every other corner
+            4: [0, 1, 3, 4],     // Four corners
+            5: [0, 1, 2, 3, 4],  // Five corners  
+            6: [0, 1, 2, 3, 4, 5] // All corners
+        };
+        
+        return positionMaps[playerCount][playerIndex];
+    }
+    
+    /**
+     * Get pieces for a player's starting position
+     */
+    getStartingPieces(playerIndex) {
+        const player = this.players[playerIndex];
+        const startPos = this.startingPositions[playerIndex];
+        const radius = this.boardConfig.radius;
+        
+        // Generate piece positions in the player's corner
+        const pieces = [];
+        
+        // King at the corner
+        pieces.push({
+            q: startPos.q,
+            r: startPos.r,
+            type: 'king',
+            player: player.color
+        });
+        
+        // Add pawns and other pieces around the corner
+        // This would depend on your specific piece layout rules
+        const adjacentPositions = this.getAdjacentStartingPositions(startPos, radius);
+        
+        adjacentPositions.forEach((pos, index) => {
+            if (index < 6) { // Limit number of starting pieces
+                pieces.push({
+                    q: pos.q,
+                    r: pos.r,
+                    type: index === 0 ? 'queen' : 'pawn',
+                    player: player.color
+                });
+            }
+        });
+        
+        return pieces;
+    }
+    
+    /**
+     * Get adjacent positions for starting pieces
+     */
+    getAdjacentStartingPositions(cornerPos, radius) {
+        const positions = [];
+        
+        // Generate positions moving inward from corner
+        const directions = [
+            { q: -1, r: 0 }, { q: -1, r: 1 }, { q: 0, r: 1 },
+            { q: 1, r: 0 }, { q: 1, r: -1 }, { q: 0, r: -1 }
+        ];
+        
+        directions.forEach(dir => {
+            const newQ = cornerPos.q + dir.q;
+            const newR = cornerPos.r + dir.r;
+            
+            // Check if position is valid on board
+            if (Math.abs(newQ) <= radius && Math.abs(newR) <= radius && Math.abs(newQ + newR) <= radius) {
+                positions.push({ q: newQ, r: newR });
+            }
+        });
+        
+        return positions;
+    }
+    
+    /**
+     * Initialize the game board with all players' pieces
+     */
+    initializeBoard() {
+        console.log('🏁 Initializing board with starting positions...');
+        
+        const allPieces = [];
+        
+        // Add starting pieces for each player
+        this.players.forEach((player, index) => {
+            const playerPieces = this.getStartingPieces(index);
+            allPieces.push(...playerPieces);
+            console.log(`${player.name} starting at corner:`, this.startingPositions[index]);
+        });
+        
+        // Initialize board state
+        this.boardState = {
+            pieces: allPieces,
+            size: this.boardConfig.radius
+        };
+        
+        return this.boardState;
+    }
+    
+    /**
+     * Make a move (enhanced for multi-player)
+     */
+    makeMove(fromQ, fromR, toQ, toR) {
+        const currentPlayer = this.getCurrentPlayer();
+        
+        // Check if current player is eliminated
+        if (currentPlayer.isEliminated) {
+            return { success: false, error: 'Player is eliminated' };
+        }
+        
+        // Validate move
+        if (!this.isValidMove(fromQ, fromR, toQ, toR, currentPlayer)) {
+            return { success: false, error: 'Invalid move' };
+        }
+        
+        // Execute move
+        const move = {
+            player: currentPlayer,
+            from: { q: fromQ, r: fromR },
+            to: { q: toQ, r: toR },
+            timestamp: Date.now(),
+            captured: this.getPieceAt(toQ, toR) // Check for captures
+        };
+        
+        this.executeMove(move);
+        this.moveHistory.push(move);
+        
+        // Check for player elimination
+        this.checkPlayerElimination();
+        
+        // Check for game end
+        if (this.checkGameEnd()) {
+            this.gameState = 'finished';
+            return { 
+                success: true, 
+                gameEnd: true, 
+                winner: this.getWinner(),
+                finalStandings: this.getFinalStandings()
+            };
+        }
+        
+        // Switch to next active player
+        this.nextTurn();
+        
+        return { 
+            success: true, 
+            nextPlayer: this.getCurrentPlayer(),
+            move: move,
+            playersRemaining: this.getActivePlayers().length
+        };
+    }
+    
+    /**
+     * Skip to next active (non-eliminated) player
+     */
+    nextTurn() {
+        let attempts = 0;
+        do {
+            this.currentPlayerIndex = (this.currentPlayerIndex + 1) % this.players.length;
+            attempts++;
+        } while (this.getCurrentPlayer().isEliminated && attempts < this.players.length);
+        
+        this.updateUI();
+    }
+    
+    /**
+     * Check if any players should be eliminated
+     */
+    checkPlayerElimination() {
+        this.players.forEach(player => {
+            if (!player.isEliminated && this.hasNoValidMoves(player)) {
+                player.isEliminated = true;
+                player.eliminationOrder = this.getEliminationOrder();
+                console.log(`${player.name} has been eliminated!`);
+            }
+        });
+    }
+    
+    /**
+     * Get active (non-eliminated) players
+     */
+    getActivePlayers() {
+        return this.players.filter(player => !player.isEliminated);
+    }
+    
+    /**
+     * Get current player (skip eliminated players)
+     */
+    getCurrentPlayer() {
+        return this.players[this.currentPlayerIndex];
+    }
+    
+    /**
+     * Enhanced UI update for multi-player
+     */
+    updateUI() {
+        const currentPlayer = this.getCurrentPlayer();
+        const activePlayers = this.getActivePlayers();
+        
+        // Update turn indicator
+        const statusElement = document.getElementById('gameStatusText');
+        if (statusElement) {
+            if (activePlayers.length === 1) {
+                statusElement.textContent = `${activePlayers[0].name} Wins!`;
+                statusElement.className = `game-over ${activePlayers[0].color}`;
+            } else {
+                statusElement.textContent = `${currentPlayer.name}'s Turn (${activePlayers.length} players remaining)`;
+                statusElement.className = `turn-indicator ${currentPlayer.color}`;
+            }
+        }
+        
+        this.updatePlayerPanel();
+        this.highlightCurrentPlayerPieces();
+    }
+    
+    /**
+     * Update player panel for multi-player
+     */
+    updatePlayerPanel() {
+        const currentPlayer = this.getCurrentPlayer();
+        const activePlayers = this.getActivePlayers();
+        const eliminatedPlayers = this.players.filter(p => p.isEliminated);
+        
+        let playerInfo = `
+            <div class="hotseat-info multi-player">
+                <div class="current-player ${currentPlayer.color}">
+                    <strong>${currentPlayer.name}'s Turn</strong>
+                </div>
+        `;
+        
+        // Show active players
+        if (activePlayers.length > 1) {
+            playerInfo += `
+                <div class="active-players">
+                    <h4>Active Players (${activePlayers.length})</h4>
+                    <div class="player-list">
+            `;
+            activePlayers.forEach(player => {
+                const isCurrent = player.id === currentPlayer.id;
+                playerInfo += `
+                    <div class="player-item ${player.color} ${isCurrent ? 'current' : ''}">
+                        ${player.name} ${isCurrent ? '👑' : ''}
+                    </div>
+                `;
+            });
+            playerInfo += '</div></div>';
+        }
+        
+        // Show eliminated players
+        if (eliminatedPlayers.length > 0) {
+            playerInfo += `
+                <div class="eliminated-players">
+                    <h4>Eliminated</h4>
+                    <div class="player-list">
+            `;
+            eliminatedPlayers.forEach(player => {
+                playerInfo += `
+                    <div class="player-item eliminated">
+                        ${player.name} (${this.getOrdinalNumber(player.eliminationOrder)})
+                    </div>
+                `;
+            });
+            playerInfo += '</div></div>';
+        }
+        
+        // Game controls
+        playerInfo += `
+            <div class="game-controls">
+                <button onclick="hotseatGame.undoMove()" ${this.moveHistory.length === 0 ? 'disabled' : ''}>
+                    Undo Move
+                </button>
+                <button onclick="hotseatGame.showGameStats()">
+                    Game Stats
+                </button>
+                <button onclick="hotseatGame.resetGame()">
+                    New Game
+                </button>
+            </div>
+        `;
+        
+        playerInfo += '</div>';
+        
+        const infoPanel = document.getElementById('hotseat-panel');
+        if (infoPanel) {
+            infoPanel.innerHTML = playerInfo;
+        }
+    }
+    
+    /**
+     * Get ordinal number (1st, 2nd, 3rd, etc.)
+     */
+    getOrdinalNumber(num) {
+        const suffixes = ['th', 'st', 'nd', 'rd'];
+        const mod100 = num % 100;
+        return num + (suffixes[(mod100 - 20) % 10] || suffixes[mod100] || suffixes[0]);
+    }
+    
+    /**
+     * Show game statistics
+     */
+    showGameStats() {
+        const stats = {
+            totalMoves: this.moveHistory.length,
+            gameTime: Date.now() - (this.startTime || Date.now()),
+            playersRemaining: this.getActivePlayers().length,
+            playerStats: this.players.map(player => ({
+                name: player.name,
+                moves: this.moveHistory.filter(m => m.player.id === player.id).length,
+                captures: this.moveHistory.filter(m => m.player.id === player.id && m.captured).length,
+                status: player.isEliminated ? 'Eliminated' : 'Active'
+            }))
+        };
+        
+        console.log('Game Statistics:', stats);
+        // Could display in a modal or update UI
+    }
+}
+
+// Initialize enhanced hotseat game
+function initializeHotseatBoard(config) {
+    const game = window.hotseatGame;
+    
+    // Initialize board with starting positions
+    game.initializeBoard();
+    
+    // Render board (would integrate with your existing board rendering)
+    if (typeof renderBoard === 'function') {
+        renderBoard(game.boardState);
+    }
+    
+    // Show hotseat UI
+    document.getElementById('hotseat-panel').style.display = 'block';
+    
+    console.log('🎮 Hotseat board initialized with', config.playerCount, 'players');
+}
+
+//END HOTSEAT GAME SECTION
+
+
+// Game joining
+function joinGame(gameId) {
+    console.log('🎮 Joining game:', gameId);
+    fetch(window.location.href, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `action=join_game&game_id=${gameId}`
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            window.location.href = `?page=game&id=${gameId}`;
+        } else {
+            showNotification('Failed to Join', data.error, 'error');
+        }
+    });
+}
+
+// Resign game functionality
+function resignGame() {
+    if (!confirm('⚠️ Are you sure you want to resign?\n\nThis will end the game and count as a loss for you. This action cannot be undone.')) {
+        return;
+    }
+    
+    console.log('🏳️ Resigning from game:', gameId);
+    
+    const resignBtn = document.querySelector('button[onclick="resignGame()"]');
+    if (resignBtn) {
+        resignBtn.disabled = true;
+        resignBtn.textContent = '🏳️ Resigning...';
+    }
+    
+    fetch(window.location.href, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `action=resign&game_id=${gameId}`
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showNotification('Game Resigned', data.message || 'You have resigned from the game', 'info');
+        } else {
+            showNotification('Resignation Failed', data.error, 'error');
+            if (resignBtn) {
+                resignBtn.disabled = false;
+                resignBtn.textContent = '🏳️ Resign Game';
+            }
+        }
+    })
+    .catch(error => {
+        console.error('❌ Resignation error:', error);
+        showNotification('Connection Error', 'Unable to resign from game', 'error');
+        if (resignBtn) {
+            resignBtn.disabled = false;
+            resignBtn.textContent = '🏳️ Resign Game';
+        }
+    });
+}
+
+function loadAvailableGames() {
+    console.log('🔍 Loading available games...');
+    
+    fetch(window.location.pathname + '?api=games')
+        .then(response => {
+            console.log('📡 Response status:', response.status);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(games => {
+            console.log('✅ Games loaded successfully:', games.length, 'games');
+            
+            const gameList = document.getElementById('available-games');
+            if (!gameList) {
+                console.error('❌ gameList element not found');
+                return;
+            }
+            
+            if (games.length === 0) {
+                gameList.innerHTML = '<p>No games available. Create one!</p>';
+                return;
+            }
+            
+ const gameHtml = games.map(game => `
+    <div class="game-item">
+        <div class="game-info">
+            <h3>${game.game_name}</h3>
+            <p>${game.current_players}/${game.player_count} players</p>
+            <small>Created by ${game.creator}${game.player_names ? ' • Players: ' + game.player_names : ''}</small>
+        </div>
+        <button class="btn" onclick="joinGame('${game.game_id}')">Join</button>
+    </div>
+`).join('');
+
+
+            gameList.innerHTML = gameHtml;
+            console.log('✅ Game list updated in DOM');
+        })
+        .catch(error => {
+            console.error('❌ Error loading games:', error);
+            const gameList = document.getElementById('available-games');
+            if (gameList) {
+                gameList.innerHTML = '<p>Error loading games. Check console.</p>';
+            }
+        });
+}
+
+// Load user's active games
+function loadMyGames() {
+    console.log('🎯 Loading my active games...');
+    
+    fetch(window.location.pathname + '?api=my-games')
+        .then(response => {
+            console.log('📡 My games response status:', response.status);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+
+            // 🔍 ADD DEBUG LINES HERE - RIGHT AT THE TOP OF THIS BLOCK
+            console.log('🔍 DEBUG: Raw API response:', data);
+            console.log('🔍 DEBUG: Type of data:', typeof data);
+            console.log('🔍 DEBUG: Is array:', Array.isArray(data));
+
+            if (data.error) {
+                console.error('❌ Error from server:', data.error);
+                const gameList = document.getElementById('my-games');
+                if (gameList) {
+                    gameList.innerHTML = '<p>Error: ' + data.error + '</p>';
+                }
+                return;
+            }
+            
+            const games = data;
+            console.log('✅ My games loaded successfully:', games.length, 'games');
+            
+            const gameList = document.getElementById('my-games');
+            if (!gameList) {
+                console.error('❌ my-games element not found');
+                return;
+            }
+            
+            if (games.length === 0) {
+                gameList.innerHTML = '<p>No active games. Join or create one!</p>';
+                return;
+            }
+            
+const gameHtml = games.map(game => {
+    let statusText = '';
+    let buttonText = '';
+    let buttonClass = 'btn';
+    
+    if (game.status === 'waiting') {
+        statusText = `Waiting for ${game.player_count - game.current_players} more player(s)`;
+        buttonText = 'Enter Waiting Room';
+    } else if (game.status === 'active') {
+        statusText = game.is_your_turn ? 'Your turn!' : 'Waiting for other player';
+        buttonText = 'Resume Game';
+        buttonClass = game.is_your_turn ? 'btn' : 'btn btn-secondary';
+    } else if (game.status === 'finished') {
+        statusText = game.winner_name ? `Won by ${game.winner_name}` : 'Game ended';
+        buttonText = 'View Game';
+        buttonClass = 'btn btn-secondary';
+    }
+    
+    return `
+        <div class="game-item ${game.is_your_turn ? 'your-turn' : ''}">
+            <div class="game-info">
+                <h3>${game.game_name}</h3>
+                <p>${statusText}</p>
+                <small>${game.player_names || `${game.current_players}/${game.player_count} players`} • ${game.status}</small>
+            </div>
+            <button class="${buttonClass}" onclick="resumeGame('${game.game_id}')">${buttonText}</button>
+        </div>
+    `;
+}).join('');
+
+
+            gameList.innerHTML = gameHtml;
+            console.log('✅ My games list updated in DOM');
+        })
+        .catch(error => {
+            console.error('❌ Error loading my games:', error);
+            const gameList = document.getElementById('my-games');
+            if (gameList) {
+                gameList.innerHTML = '<p>Error loading your games. Try refreshing.</p>';
+            }
+        });
+}
+
+// Resume/enter a game the user is already in
+function resumeGame(gameId) {
+    console.log('🎮 Resuming game:', gameId);
+    window.location.href = `?page=game&id=${gameId}`;
+}
+
+// Handle game mode changes
+function updateGameModeOptions() {
+    const gameMode = document.getElementById('game_mode');
+    const playersGroup = document.getElementById('players-group');
+    const aiDifficultyGroup = document.getElementById('ai-difficulty-group');
+    
+    if (!gameMode || !playersGroup || !aiDifficultyGroup) {
+        return; // Elements don't exist yet
+    }
+    
+    console.log('🎮 Game mode changed to:', gameMode.value);
+    
+    if (gameMode.value === 'ai') {
+        playersGroup.style.display = 'none';
+        aiDifficultyGroup.style.display = 'block';
+        
+        // Set AI games to 2-player by default
+        const playerCount = document.getElementById('player_count');
+        if (playerCount) {
+            playerCount.value = '2';
+        }
+    } else {
+        playersGroup.style.display = 'block';
+        aiDifficultyGroup.style.display = 'none';
+    }
+    
+    updateDefaultGameName();
+}
+
+function updateDefaultGameName() {
+    const gameNameInput = document.getElementById('game_name');
+    const playerCount = document.getElementById('player_count');
+    const boardSize = document.getElementById('board_size');
+    const gameMode = document.getElementById('game_mode');
+    const aiDifficulty = document.getElementById('ai_difficulty');
+    
+    if (!gameNameInput || !boardSize) return;
+    
+    const currentValue = gameNameInput.value;
+    const isDefaultPattern = /^(2|3)-Player (Small|Medium|Large|Jumbo) Game$/.test(currentValue) ||
+                           /^vs AI \((Easy|Medium|Hard)\) (Small|Medium|Large|Jumbo) Game$/.test(currentValue);
+    
+    if (isDefaultPattern || currentValue === '') {
+        const sizeNames = {
+            '5': 'Small', '6': 'Medium', '7': 'Large', '8': 'Jumbo'
+        };
+        
+        let defaultName;
+        if (gameMode && gameMode.value === 'ai' && aiDifficulty) {
+            const difficultyNames = {
+                'easy': 'Easy', 'medium': 'Medium', 'hard': 'Hard'
+            };
+            defaultName = `vs AI (${difficultyNames[aiDifficulty.value]}) ${sizeNames[boardSize.value]} Game`;
+        } else if (playerCount) {
+            defaultName = `${playerCount.value}-Player ${sizeNames[boardSize.value]} Game`;
+        }
+        
+        if (defaultName) {
+            gameNameInput.value = defaultName;
+        }
+    }
+}
+
+function resetToDefaultName() {
+    const playerCount = document.getElementById('player_count').value;
+    const boardSize = document.getElementById('board_size').value;
+    const gameNameInput = document.getElementById('game_name');
+    
+    const sizeNames = {
+        '5': 'Small',
+        '6': 'Medium', 
+        '7': 'Large',
+        '8': 'Jumbo'
+    };
+    
+    const defaultName = `${playerCount}-Player ${sizeNames[boardSize]} Game`;
+    gameNameInput.value = defaultName;
+    
+    showNotification('✅ Name Reset', 'Game name reset to default', 'success');
+}
+
+function showNotification(title, message, type = 'error') {
+    console.log(`📢 Notification: ${title} - ${message}`);
+    
+    const existing = document.querySelector('.notification');
+    if (existing) existing.remove();
+    
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+    notification.innerHTML = `
+        <div class="notification-title">${title}</div>
+        <div class="notification-message">${message}</div>
+    `;
+    
+    document.body.appendChild(notification);
+    
+    setTimeout(() => notification.classList.add('show'), 100);
+    
+    setTimeout(() => {
+        notification.classList.remove('show');
+        setTimeout(() => notification.remove(), 300);
+    }, 3000);
+}
+
+// Game-specific JavaScript
+function selectHex(q, r) {
+    console.log('🎯 selectHex called:', q, r, 'gameId:', typeof gameId !== 'undefined' ? gameId : 'UNDEFINED');
+    
+    if (typeof userCanMove !== 'undefined' && !userCanMove) {
+        showNotification('Not Your Turn', 'Wait for your turn to move', 'warning');
+        return;
+    }
+    
+    const cell = document.querySelector(`[data-q="${q}"][data-r="${r}"]`);
+    if (!cell) {
+        console.error('❌ Cell not found for coordinates:', q, r);
+        return;
+    }
+    
+    // If clicking the same hex, deselect it
+    if (selectedHex && selectedHex.q === q && selectedHex.r === r) {
+        clearSelection();
+        return;
+    }
+    
+    // If we have a selected piece and clicked on a valid move, make the move
+    if (selectedHex && cell.classList.contains('valid-move')) {
+        makeMove(selectedHex.q, selectedHex.r, q, r);
+        return;
+    }
+    
+    // Check if there's actually a piece at this position
+    const piece = cell.querySelector('.piece');
+    if (!piece) {
+        clearSelection();
+        return; // No piece here, don't show any moves
+    }
+    
+    // Select this piece and show its valid moves
+    clearSelection();
+    selectedHex = {q: q, r: r};
+    cell.classList.add('selected');
+    
+    if (typeof gameId !== 'undefined') {
+        getValidMoves(q, r);
+    } else {
+        // For demo mode, highlight some example moves
+        highlightValidMoves(q, r);
+    }
+}
+
+function clearSelection() {
+    document.querySelectorAll('.hex-cell').forEach(cell => {
+        cell.classList.remove('selected', 'valid-move');
+    });
+    selectedHex = null;
+}
+
+function clearCheckHighlights() {
+    document.querySelectorAll('.hex-cell').forEach(cell => {
+        cell.classList.remove('king-in-check');
+    });
+}
+
+function highlightValidMoves(q, r) {
+    const directions = [
+        [1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1],
+        [2, -1], [1, -2], [-1, -1], [-2, 1], [-1, 2], [1, 1]
+    ];
+    
+    directions.forEach(([dq, dr]) => {
+        const newQ = q + dq;
+        const newR = r + dr;
+        const targetCell = document.querySelector(`[data-q="${newQ}"][data-r="${newR}"]`);
+        if (targetCell) {
+            targetCell.classList.add('valid-move');
+        }
+    });
+}
+
+function getValidMoves(q, r) {
+    console.log('🎯 Getting valid moves for:', q, r, 'gameId:', gameId);
+    
+    fetch(window.location.href, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `action=getValidMoves&game_id=${gameId}&fromQ=${q}&fromR=${r}`
+    })
+    .then(response => response.json())
+    .then(data => {
+        console.log('📡 Server response:', data);
+        
+        if (data.success && data.validMoves && data.validMoves.length > 0) {
+            console.log('✅ Found', data.validMoves.length, 'valid moves');
+            data.validMoves.forEach(move => {
+                const targetCell = document.querySelector(`[data-q="${move.q}"][data-r="${move.r}"]`);
+                if (targetCell) {
+                    targetCell.classList.add('valid-move');
+                }
+            });
+        } else {
+            console.log('❌ No valid moves or error:', data);
+            clearSelection();
+        }
+    })
+    .catch(error => {
+        console.error('❌ Fetch error:', error);
+        clearSelection();
+    });
+}
+
+function makeMove(fromQ, fromR, toQ, toR) {
+    console.log('🎯 Making move:', fromQ, fromR, '→', toQ, toR);
+    
+    // Check if game is over before making any move
+    if (isGameOver()) {
+        console.log('🏁 Game is over, not making move');
+        clearSelection();
+        return;
+    }
+    
+    fetch(window.location.href, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `action=move&game_id=${gameId}&fromQ=${fromQ}&fromR=${fromR}&toQ=${toQ}&toR=${toR}`
+    })
+    .then(response => response.json())
+    .then(data => {
+        console.log('📡 Move response:', data);
+        
+if (data.success) {
+    console.log('✅ Move successful');
+    setTimeout(() => {
+        location.reload();
+    }, 500);
+}
+
+         else {
+            // Only show notifications for errors
+            if (data.errorType === 'exposes-king') {
+                showNotification('⚠️ King in Danger!', 'That move would expose your king to check', 'warning');
+            } else if (data.errorType === 'wrong-player') {
+                showNotification('❌ Wrong Piece', 'You can only move your own pieces', 'error');
+            } else if (data.errorType === 'no-piece') {
+                showNotification('❌ No Piece', 'No piece at selected position', 'error');
+            } else {
+                showNotification('❌ Invalid Move', data.error || 'Move not allowed', 'error');
+            }
+        }
+        clearSelection();
+    })
+    .catch(error => {
+        console.error('❌ Move error:', error);
+        showNotification('❌ Connection Error', 'Unable to make move', 'error');
+        clearSelection();
+    });
+}
+
+// Call this function after board updates to reapply hover effects
+function refreshBoardEvents() {
+    console.log('🔄 Refreshing board events...');
+    applyHoverEffects();
+    
+    // Check for AI move after refresh
+    if (isAIGameEnhanced()) {
+        autoTriggerAI();
+    }
+}
+
+// Check if it's the AI's turn and trigger AI move
+function checkForAIMove() {
+    // Check if game is over first
+    if (isGameOver()) {
+        console.log('🏁 Game is over, not making AI move');
+        checkAndHandleGameOver();
+        return;
+    }
+    
+    // Only check for AI moves if we have gameId defined (not in demo mode) or force mode
+    if (typeof gameId === 'undefined' && !window.forceAIMode) {
+        console.log('🤖 No gameId and not forced, skipping server AI check');
+        // Try client-side AI anyway
+        makeClientSideAIMove();
+        return;
+    }
+    
+    console.log('🤖 Checking for AI move...');
+    
+    // Add a small delay to make the AI move feel more natural
+    setTimeout(() => {
+        fetch(window.location.href, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: `action=ai_move&game_id=${gameId}`
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                console.log('🤖 AI made move successfully');
+                
+                // If we have move data, animate it first
+                if (data.move) {
+                    animateAIMove(data.move, () => {
+                        // Reload after animation
+                        setTimeout(() => location.reload(), 500);
+                    });
+                } else {
+                    // No move data, just reload
+                    setTimeout(() => location.reload(), 1000);
+                }
+                
+            } else {
+                // If server AI fails, try client-side AI
+                if (data.error && (data.error.includes('Not implemented') || 
+                                  data.error.includes('AI not found') ||
+                                  data.error.includes('No AI'))) {
+                    console.log('🤖 Server AI not available, using client-side AI...');
+                    makeClientSideAIMove();
+                } else if (data.error && !data.error.includes('Not AI') && 
+                          !data.error.includes('Not an AI game') &&
+                          !data.error.includes('wrong turn')) {
+                    console.error('🤖 AI move error:', data.error);
+                    // Still try client-side as fallback
+                    console.log('🤖 Trying client-side AI as fallback...');
+                    makeClientSideAIMove();
+                } else {
+                    console.log('🤖 Not AI turn or not AI game');
+                }
+            }
+        })
+        .catch(error => {
+            console.error('🤖 AI move fetch error:', error);
+            // Fallback to client-side AI
+            console.log('🤖 Falling back to client-side AI...');
+            makeClientSideAIMove();
+        });
+    }, 1500); // 1.5 second delay
+}
+
+// Animate AI move on the board
+function animateAIMove(move, callback) {
+    console.log('🎬 Animating AI move:', move);
+    
+    const fromCell = document.querySelector(`[data-q="${move.fromQ}"][data-r="${move.fromR}"]`);
+    const toCell = document.querySelector(`[data-q="${move.toQ}"][data-r="${move.toR}"]`);
+    
+    if (!fromCell || !toCell) {
+        console.log('🎬 Could not find cells for animation, calling callback');
+        callback();
+        return;
+    }
+    
+    const piece = fromCell.querySelector('.piece');
+    if (!piece) {
+        console.log('🎬 No piece found for animation, calling callback');
+        callback();
+        return;
+    }
+    
+    // Highlight the move
+    fromCell.classList.add('selected');
+    toCell.classList.add('valid-move');
+    
+    // Get positions for animation
+    const fromRect = fromCell.getBoundingClientRect();
+    const toRect = toCell.getBoundingClientRect();
+    
+    // Create animated piece clone
+    const animatedPiece = piece.cloneNode(true);
+    animatedPiece.style.cssText = `
+        position: fixed;
+        top: ${fromRect.top + fromRect.height/2}px;
+        left: ${fromRect.left + fromRect.width/2}px;
+        transform: translate(-50%, -50%) scale(1.2);
+        z-index: 1000;
+        transition: all 0.8s cubic-bezier(0.4, 0.0, 0.2, 1);
+        pointer-events: none;
+        filter: drop-shadow(0 4px 8px rgba(0,0,0,0.3));
+    `;
+    document.body.appendChild(animatedPiece);
+    
+    // Hide original piece
+    piece.style.opacity = '0';
+    
+    // Check for capture
+    const targetPiece = toCell.querySelector('.piece');
+    if (targetPiece) {
+        // Animate captured piece disappearing
+        targetPiece.style.transition = 'all 0.6s ease-out';
+        targetPiece.style.transform = 'translate(-50%, -50%) scale(0) rotate(180deg)';
+        targetPiece.style.opacity = '0';
+    }
+    
+    // Start animation after a brief delay
+    setTimeout(() => {
+        animatedPiece.style.top = `${toRect.top + toRect.height/2}px`;
+        animatedPiece.style.left = `${toRect.left + toRect.width/2}px`;
+    }, 50);
+    
+    // Complete animation
+    setTimeout(() => {
+        // Clean up
+        animatedPiece.remove();
+        fromCell.classList.remove('selected');
+        toCell.classList.remove('valid-move');
+        
+        // Show piece in final position briefly
+        if (targetPiece) {
+            targetPiece.remove();
+        }
+        
+        const toContent = toCell.querySelector('.hex-content');
+        if (toContent) {
+            const finalPiece = piece.cloneNode(true);
+            finalPiece.style.opacity = '1';
+            finalPiece.style.transform = 'translate(-50%, -50%) scale(1)';
+            toContent.appendChild(finalPiece);
+        }
+        
+        piece.remove();
+        
+        // Highlight final position briefly
+        toCell.classList.add('selected');
+        setTimeout(() => {
+            toCell.classList.remove('selected');
+            callback();
+        }, 300);
+        
+    }, 850); // Slightly longer than transition duration
+}
+
+// Client-side AI implementation
+function makeClientSideAIMove() {
+    console.log('🤖 Starting client-side AI move...');
+    
+    // Check if game is over first
+    if (isGameOver()) {
+        console.log('🏁 Game is over, not making client-side AI move');
+        checkAndHandleGameOver();
+        return;
+    }
+    
+    if (typeof gameId === 'undefined' && !window.forceAIMode) {
+        console.log('🤖 No gameId and not forced mode, skipping AI move');
+        return;
+    }
+    
+    // Get current board state
+    const boardState = getBoardState();
+    if (!boardState) {
+        console.error('🤖 Could not get board state');
+        return;
+    }
+    
+    console.log('🤖 Board state found:', boardState.pieces.length, 'pieces');
+    
+    // Determine AI difficulty (default to medium if not specified)
+    const aiDifficulty = getAIDifficulty() || 'medium';
+    console.log('🤖 AI Difficulty:', aiDifficulty);
+    
+    // Calculate AI move
+    setTimeout(() => {
+        const aiMove = calculateAIMove(boardState, aiDifficulty);
+        
+        if (aiMove) {
+            console.log('🤖 AI calculated move:', aiMove);
+            
+            if (typeof gameId !== 'undefined') {
+                // Real game - animate then make server move
+                animateAIMove(aiMove, () => {
+                    // Make the actual server move after animation
+                    makeMove(aiMove.fromQ, aiMove.fromR, aiMove.toQ, aiMove.toR);
+                });
+            } else {
+                // Demo mode - just animate (no server call)
+                animateAIMove(aiMove, () => {
+                    console.log('✅ Demo AI move complete');
+                });
+            }
+        } else {
+            console.log('🤖 AI could not find a valid move');
+            showNotification('🤖 AI Stuck', 'AI cannot find a valid move', 'warning');
+        }
+    }, 1000 + Math.random() * 2000); // Random thinking time 1-3 seconds
+}
+
+// Legacy function - now uses new animation system
+function simulateAIMoveVisually(move) {
+    console.log('🎭 Using legacy simulate function - redirecting to new animation');
+    animateAIMove(move, () => {
+        console.log('✅ Legacy AI move complete');
+    });
+}
+
+// Get current board state from DOM
+function getBoardState() {
+    const pieces = [];
+    const cells = document.querySelectorAll('.hex-cell');
+    
+    cells.forEach(cell => {
+        const piece = cell.querySelector('.piece');
+        if (piece) {
+            const q = parseInt(cell.getAttribute('data-q'));
+            const r = parseInt(cell.getAttribute('data-r'));
+            const isRed = piece.classList.contains('red-piece');
+            const isBlue = piece.classList.contains('blue-piece');
+            const pieceType = getPieceType(piece.textContent);
+            
+            pieces.push({
+                q: q,
+                r: r,
+                type: pieceType,
+                player: isRed ? 'red' : (isBlue ? 'blue' : 'unknown'),
+                element: piece
+            });
+        }
+    });
+    
+    return { pieces };
+}
+
+// Determine piece type from Unicode symbol
+function getPieceType(symbol) {
+    const pieceMap = {
+        '♚': 'king', '♛': 'queen', '♜': 'rook',
+        '♝': 'bishop', '♞': 'knight', '♟': 'pawn',
+        '♔': 'king', '♕': 'queen', '♖': 'rook',
+        '♗': 'bishop', '♘': 'knight', '♙': 'pawn'
+    };
+    return pieceMap[symbol] || 'unknown';
+}
+
+// Get AI difficulty from page or default
+function getAIDifficulty() {
+    // Try to get from form first
+    const difficultySelect = document.getElementById('ai_difficulty');
+    if (difficultySelect) {
+        return difficultySelect.value;
+    }
+    
+    // Check URL parameters
+    const urlParams = new URLSearchParams(window.location.search);
+    const difficulty = urlParams.get('difficulty');
+    if (difficulty) {
+        return difficulty;
+    }
+    
+    // Default to medium
+    return 'medium';
+}
+
+// Main AI move calculation
+function calculateAIMove(boardState, difficulty) {
+    console.log('🧠 Calculating AI move with difficulty:', difficulty);
+    
+    // Find AI player pieces (assume AI is blue player for now)
+    const aiPieces = boardState.pieces.filter(piece => piece.player === 'blue');
+    const enemyPieces = boardState.pieces.filter(piece => piece.player === 'red');
+    
+    if (aiPieces.length === 0) {
+        console.log('🤖 No AI pieces found');
+        return null;
+    }
+    
+    // Get all possible moves for AI pieces
+    const allMoves = [];
+    
+    aiPieces.forEach(piece => {
+        const moves = getValidMovesForPiece(piece.type, piece.q, piece.r);
+        moves.forEach(move => {
+            if (isValidMoveOnBoard(piece.q, piece.r, move.q, move.r, boardState)) {
+                allMoves.push({
+                    fromQ: piece.q,
+                    fromR: piece.r,
+                    toQ: move.q,
+                    toR: move.r,
+                    piece: piece,
+                    moveType: move.type,
+                    score: 0
+                });
+            }
+        });
+    });
+    
+    if (allMoves.length === 0) {
+        console.log('🤖 No valid moves found');
+        return null;
+    }
+    
+    // Score moves based on difficulty
+    allMoves.forEach(move => {
+        move.score = scoreMoveByDifficulty(move, boardState, difficulty);
+    });
+    
+    // Select move based on difficulty
+    return selectMoveByDifficulty(allMoves, difficulty);
+}
+
+// Check if a move is valid on the current board
+function isValidMoveOnBoard(fromQ, fromR, toQ, toR, boardState) {
+    // Check if target position is within board bounds
+    if (!isValidHex(toQ, toR)) {
+        return false;
+    }
+    
+    // Check if target position is occupied by own piece
+    const targetPiece = boardState.pieces.find(p => p.q === toQ && p.r === toR);
+    const movingPiece = boardState.pieces.find(p => p.q === fromQ && p.r === fromR);
+    
+    if (targetPiece && targetPiece.player === movingPiece.player) {
+        return false; // Can't capture own piece
+    }
+    
+    return true;
+}
+
+// Score moves based on AI difficulty
+function scoreMoveByDifficulty(move, boardState, difficulty) {
+    let score = 0;
+    
+    // Base scoring
+    const targetPiece = boardState.pieces.find(p => p.q === move.toQ && p.r === move.toR);
+    
+    // Capture scoring
+    if (targetPiece && targetPiece.player !== move.piece.player) {
+        const pieceValues = {
+            'pawn': 1, 'knight': 3, 'bishop': 3,
+            'rook': 5, 'queen': 9, 'king': 100
+        };
+        score += pieceValues[targetPiece.type] || 0;
+    }
+    
+    // Positional scoring (move toward center)
+    const centerDistance = Math.abs(move.toQ) + Math.abs(move.toR) + Math.abs(move.toQ + move.toR);
+    score += (8 - centerDistance) * 0.1;
+    
+    // Difficulty-specific adjustments
+    switch (difficulty) {
+        case 'easy':
+            // Easy AI: Add randomness, prefer simple moves
+            score += Math.random() * 2;
+            if (move.piece.type === 'pawn') score += 0.5;
+            break;
+            
+        case 'medium':
+            // Medium AI: Balanced play with some strategy
+            score += Math.random() * 1;
+            // Prefer developing pieces
+            if (move.piece.type === 'knight' || move.piece.type === 'bishop') {
+                score += 0.3;
+            }
+            break;
+            
+        case 'hard':
+            // Hard AI: More strategic, less random
+            score += Math.random() * 0.5;
+            // Advanced piece development
+            if (move.piece.type === 'queen' || move.piece.type === 'rook') {
+                score += 0.2;
+            }
+            // Penalize king moves unless necessary
+            if (move.piece.type === 'king') {
+                score -= 0.3;
+            }
+            break;
+    }
+    
+    return score;
+}
+
+// Select move based on difficulty
+function selectMoveByDifficulty(moves, difficulty) {
+    // Sort moves by score (highest first)
+    moves.sort((a, b) => b.score - a.score);
+    
+    switch (difficulty) {
+        case 'easy':
+            // Easy: Pick from top 50% of moves randomly
+            const easyMoves = moves.slice(0, Math.ceil(moves.length * 0.5));
+            return easyMoves[Math.floor(Math.random() * easyMoves.length)];
+            
+        case 'medium':
+            // Medium: Pick from top 25% of moves
+            const mediumMoves = moves.slice(0, Math.max(1, Math.ceil(moves.length * 0.25)));
+            return mediumMoves[Math.floor(Math.random() * mediumMoves.length)];
+            
+        case 'hard':
+            // Hard: Pick the best move with small chance of picking second best
+            if (moves.length > 1 && Math.random() < 0.1) {
+                return moves[1]; // 10% chance to pick second best
+            }
+            return moves[0]; // 90% chance to pick best move
+            
+        default:
+            return moves[0];
+    }
+}
+
+// Auto-trigger AI move when it's AI's turn
+function autoTriggerAI() {
+    console.log('🤖 autoTriggerAI called');
+    
+    // FIRST: Always check if game is over
+    if (isGameOver()) {
+        console.log('🏁 Game is over, STOPPING autoTriggerAI');
+        checkAndHandleGameOver();
+        return;
+    }
+    
+    console.log('🤖 gameId:', typeof gameId !== 'undefined' ? gameId : 'UNDEFINED');
+    console.log('🤖 userCanMove:', typeof userCanMove !== 'undefined' ? userCanMove : 'UNDEFINED');
+    console.log('🤖 isAIGame():', isAIGame());
+    
+    // Check if it's an AI game and AI's turn
+    if (typeof gameId !== 'undefined' && isAIGame()) {
+        console.log('🤖 This is an AI game');
+        
+        // If user can't move, it might be AI's turn
+        if (typeof userCanMove !== 'undefined' && !userCanMove) {
+            console.log('🤖 User cannot move, triggering AI...');
+            
+            // Small delay before checking for AI move
+            setTimeout(() => {
+                // Double-check game over before proceeding
+                if (!isGameOver()) {
+                    checkForAIMove();
+                } else {
+                    console.log('🏁 Game over detected in timeout, not making AI move');
+                }
+            }, 2000);
+        } else if (typeof userCanMove === 'undefined') {
+            // If userCanMove is not defined, try to detect from game state
+            console.log('🤖 userCanMove undefined, checking game state...');
+            
+            setTimeout(() => {
+                if (!isGameOver() && shouldAIMoveNow()) {
+                    console.log('🤖 AI should move now, triggering...');
+                    checkForAIMove();
+                } else {
+                    console.log('🤖 Not AI turn yet or game over');
+                }
+            }, 2000);
+        } else {
+            console.log('🤖 User can move, not AI turn');
+        }
+    } else {
+        console.log('🤖 Not an AI game or no gameId');
+    }
+}
+
+// Check if AI should move based on game state
+function shouldAIMoveNow() {
+    // Never move if game is over
+    if (isGameOver()) {
+        console.log('🏁 Game is over, AI should not move');
+        return false;
+    }
+    
+    // Look for game status indicators
+    const gameStatus = document.getElementById('gameStatusText');
+    if (gameStatus) {
+        const statusText = gameStatus.textContent.toLowerCase();
+        console.log('🤖 Game status text:', statusText);
+        
+        // Check for AI turn indicators
+        if (statusText.includes('ai') && 
+            (statusText.includes('turn') || statusText.includes('move'))) {
+            return true;
+        }
+        
+        // Check for "waiting for" indicators that suggest it's AI turn
+        if (statusText.includes('waiting') && statusText.includes('ai')) {
+            return false; // Actually waiting for AI, so AI should move
+        }
+    }
+    
+    // Check for turn indicators in the page
+    const turnIndicators = document.querySelectorAll('[class*="turn"], [class*="player"]');
+    for (let indicator of turnIndicators) {
+        const text = indicator.textContent.toLowerCase();
+        if (text.includes('ai') && text.includes('turn')) {
+            return true;
+        }
+    }
+    
+    // Fallback: if no clear indication, assume AI should try to move
+    return true;
+}
+
+// Enhanced AI move with better error handling
+function triggerAIMove() {
+    console.log('🤖 Manually triggering AI move...');
+    if (isAIGameEnhanced()) {
+        checkForAIMove();
+    } else {
+        console.log('🤖 Not an AI game, creating test scenario...');
+        // For testing purposes, force AI move
+        makeClientSideAIMove();
+    }
+}
+
+// Check if the game is over - enhanced detection
+function isGameOver() {
+    // If we already detected game over, stay that way
+    if (gameOverDetected) {
+        return true;
+    }
+    
+    // Check for game over indicators in the page
+    const gameStatus = document.getElementById('gameStatusText');
+    if (gameStatus) {
+        const statusText = gameStatus.textContent.toLowerCase();
+        if (statusText.includes('game over') || 
+            statusText.includes('checkmate') || 
+            statusText.includes('stalemate') ||
+            statusText.includes('wins') ||
+            statusText.includes('resigned') ||
+            statusText.includes('game ended') ||
+            statusText.includes('victory') ||
+            statusText.includes('defeat')) {
+            console.log('🏁 Game over detected from status text:', statusText);
+            gameOverDetected = true;
+            return true;
+        }
+    }
+    
+    // Check for game over elements
+    const gameOverElements = document.querySelectorAll('[class*="game-over"], [class*="ended"], [class*="finished"], [class*="checkmate"], [class*="stalemate"]');
+    if (gameOverElements.length > 0) {
+        console.log('🏁 Game over detected from elements');
+        gameOverDetected = true;
+        return true;
+    }
+    
+    // Check if userCanMove is defined and game status indicates game over
+    if (typeof userCanMove !== 'undefined' && typeof gameOver !== 'undefined' && gameOver) {
+        console.log('🏁 Game over detected from gameOver variable');
+        gameOverDetected = true;
+        return true;
+    }
+    
+    // Check for resign button being hidden (might indicate game over)
+    const resignBtn = document.querySelector('button[onclick="resignGame()"]');
+    if (resignBtn && resignBtn.style.display === 'none') {
+        console.log('🏁 Game over detected from hidden resign button');
+        gameOverDetected = true;
+        return true;
+    }
+    
+    // Check board state - if one player has no pieces or no king
+    const boardState = getBoardState();
+    if (boardState && boardState.pieces.length > 0) {
+        const redPieces = boardState.pieces.filter(p => p.player === 'red');
+        const bluePieces = boardState.pieces.filter(p => p.player === 'blue');
+        const redKing = redPieces.find(p => p.type === 'king');
+        const blueKing = bluePieces.find(p => p.type === 'king');
+        
+        if (!redKing || !blueKing) {
+            console.log('🏁 Game over detected - missing king');
+            gameOverDetected = true;
+            return true;
+        }
+        
+        if (redPieces.length === 0 || bluePieces.length === 0) {
+            console.log('🏁 Game over detected - no pieces left');
+            gameOverDetected = true;
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+// Force game over (for emergency stops)
+function forceGameOver(reason = 'Manual stop') {
+    console.log('🛑 FORCING GAME OVER:', reason);
+    gameOverDetected = true;
+    
+    // Stop all AI activity
+    window.forceAIMode = false;
+    
+    // Clear any pending timeouts
+    clearAllAITimeouts();
+    
+    // Show emergency message
+    const gameStatus = document.getElementById('gameStatusText');
+    if (gameStatus) {
+        gameStatus.innerHTML = `<div style="
+            font-size: 18px; 
+            font-weight: bold; 
+            color: #f44336;
+            text-align: center;
+            padding: 15px;
+            background: rgba(244, 67, 54, 0.1);
+            border-radius: 8px;
+            border: 2px solid #f44336;
+            margin: 10px 0;
+        ">🛑 Game Stopped: ${reason}</div>`;
+    }
+}
+
+// Clear all AI-related timeouts
+function clearAllAITimeouts() {
+    // Clear the periodic interval if it exists
+    if (window.aiPeriodicCheck) {
+        clearInterval(window.aiPeriodicCheck);
+        window.aiPeriodicCheck = null;
+    }
+}
+
+// Check if current game has AI opponent
+function isAIGame() {
+    console.log('🤖 Checking if this is an AI game...');
+    
+    // First check if game is over - no AI moves if game ended
+    if (isGameOver()) {
+        console.log('🏁 Game is over, not an AI game anymore');
+        return false;
+    }
+    
+    // Check URL parameters for AI indicator
+    const urlParams = new URLSearchParams(window.location.search);
+    const gameMode = urlParams.get('mode');
+    console.log('🤖 URL game mode:', gameMode);
+    if (gameMode === 'ai') {
+        console.log('✅ AI game detected from URL mode');
+        return true;
+    }
+    
+    // Check for AI difficulty parameter
+    const difficulty = urlParams.get('difficulty');
+    console.log('🤖 URL difficulty:', difficulty);
+    if (difficulty && ['easy', 'medium', 'hard'].includes(difficulty)) {
+        console.log('✅ AI game detected from difficulty parameter');
+        return true;
+    }
+    
+    // Check for AI indicator in page data
+    const aiIndicator = document.querySelector('[data-ai-game="true"]');
+    if (aiIndicator) {
+        console.log('✅ AI game detected from data attribute');
+        return true;
+    }
+    
+    // Check game status text for AI mentions
+    const gameStatus = document.getElementById('gameStatusText');
+    if (gameStatus && gameStatus.textContent.toLowerCase().includes('ai')) {
+        console.log('✅ AI game detected from status text');
+        return true;
+    }
+    
+    // Check for AI player names or indicators
+    const playerElements = document.querySelectorAll('[class*="player"], [class*="name"]');
+    for (let element of playerElements) {
+        if (element.textContent.toLowerCase().includes('ai') || 
+            element.textContent.toLowerCase().includes('bot')) {
+            console.log('✅ AI game detected from player elements');
+            return true;
+        }
+    }
+    
+    // Check for any element with "ai" in class name
+    const aiElements = document.querySelectorAll('[class*="ai"], [class*="bot"]');
+    if (aiElements.length > 0) {
+        console.log('✅ AI game detected from AI elements');
+        return true;
+    }
+    
+    console.log('❌ No AI game indicators found');
+    return false;
+}
+
+// Check if current game has AI opponent
+function isAIGame() {
+    console.log('🤖 Checking if this is an AI game...');
+    
+    // First check if game is over - no AI moves if game ended
+    if (isGameOver()) {
+        console.log('🏁 Game is over, not an AI game anymore');
+        return false;
+    }
+    // If we already detected game over, stay that way
+    if (gameOverDetected) {
+        return true;
+    }
+    
+    // Check for game over indicators in the page
+    const gameStatus = document.getElementById('gameStatusText');
+    if (gameStatus) {
+        const statusText = gameStatus.textContent.toLowerCase();
+        if (statusText.includes('game over') || 
+            statusText.includes('checkmate') || 
+            statusText.includes('stalemate') ||
+            statusText.includes('wins') ||
+            statusText.includes('resigned') ||
+            statusText.includes('game ended') ||
+            statusText.includes('victory') ||
+            statusText.includes('defeat')) {
+            console.log('🏁 Game over detected from status text:', statusText);
+            gameOverDetected = true;
+            return true;
+        }
+    }
+    
+    // Check for game over elements
+    const gameOverElements = document.querySelectorAll('[class*="game-over"], [class*="ended"], [class*="finished"], [class*="checkmate"], [class*="stalemate"]');
+    if (gameOverElements.length > 0) {
+        console.log('🏁 Game over detected from elements');
+        gameOverDetected = true;
+        return true;
+    }
+    
+    // Check if userCanMove is defined and game status indicates game over
+    if (typeof userCanMove !== 'undefined' && typeof gameOver !== 'undefined' && gameOver) {
+        console.log('🏁 Game over detected from gameOver variable');
+        gameOverDetected = true;
+        return true;
+    }
+    
+    // Check for resign button being hidden (might indicate game over)
+    const resignBtn = document.querySelector('button[onclick="resignGame()"]');
+    if (resignBtn && resignBtn.style.display === 'none') {
+        console.log('🏁 Game over detected from hidden resign button');
+        gameOverDetected = true;
+        return true;
+    }
+    
+    // Check board state - if one player has no pieces or no king
+    const boardState = getBoardState();
+    if (boardState && boardState.pieces.length > 0) {
+        const redPieces = boardState.pieces.filter(p => p.player === 'red');
+        const bluePieces = boardState.pieces.filter(p => p.player === 'blue');
+        const redKing = redPieces.find(p => p.type === 'king');
+        const blueKing = bluePieces.find(p => p.type === 'king');
+        
+        if (!redKing || !blueKing) {
+            console.log('🏁 Game over detected - missing king');
+            gameOverDetected = true;
+            return true;
+        }
+        
+        if (redPieces.length === 0 || bluePieces.length === 0) {
+            console.log('🏁 Game over detected - no pieces left');
+            gameOverDetected = true;
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+// Force game over (for emergency stops)
+function forceGameOver(reason = 'Manual stop') {
+    console.log('🛑 FORCING GAME OVER:', reason);
+    gameOverDetected = true;
+    
+    // Stop all AI activity
+    window.forceAIMode = false;
+    
+    // Clear any pending timeouts
+    clearAllAITimeouts();
+    
+    // Show emergency message
+    const gameStatus = document.getElementById('gameStatusText');
+    if (gameStatus) {
+        gameStatus.innerHTML = `<div style="
+            font-size: 18px; 
+            font-weight: bold; 
+            color: #f44336;
+            text-align: center;
+            padding: 15px;
+            background: rgba(244, 67, 54, 0.1);
+            border-radius: 8px;
+            border: 2px solid #f44336;
+            margin: 10px 0;
+        ">🛑 Game Stopped: ${reason}</div>`;
+    }
+}
+
+// Clear all AI-related timeouts
+function clearAllAITimeouts() {
+    // Clear the periodic interval if it exists
+    if (window.aiPeriodicCheck) {
+        clearInterval(window.aiPeriodicCheck);
+        window.aiPeriodicCheck = null;
+    }
+}
+
+// Enhanced game over detection and messaging
+function checkAndHandleGameOver() {
+    const gameStatus = document.getElementById('gameStatusText');
+    if (!gameStatus) return false;
+    
+    const statusText = gameStatus.textContent.toLowerCase();
+    
+    // Detect different game over scenarios
+    if (statusText.includes('checkmate')) {
+        if (statusText.includes('red') || statusText.includes('you')) {
+            showCheerfulGameOver('🎉 Checkmate! Red Wins! 🎉', 'victory');
+        } else if (statusText.includes('blue') || statusText.includes('ai')) {
+            showCheerfulGameOver('💙 Checkmate! Blue Wins! 💙', 'defeat');
+        } else {
+            showCheerfulGameOver('♛ Checkmate! Game Over! ♛', 'neutral');
+        }
+        return true;
+    }
+    
+    if (statusText.includes('stalemate')) {
+        showCheerfulGameOver('🤝 Stalemate! It\'s a Draw! 🤝', 'draw');
+        return true;
+    }
+    
+    if (statusText.includes('resigned')) {
+        if (statusText.includes('blue') || statusText.includes('ai')) {
+            showCheerfulGameOver('🏳️ Blue Resigns! Red Wins! 🎉', 'victory');
+        } else {
+            showCheerfulGameOver('🏳️ Red Resigns! Blue Wins! 💙', 'defeat');
+        }
+        return true;
+    }
+    
+    if (statusText.includes('wins')) {
+        if (statusText.includes('red')) {
+            showCheerfulGameOver('🎉 Red Wins! Congratulations! 🎉', 'victory');
+        } else if (statusText.includes('blue')) {
+            showCheerfulGameOver('💙 Blue Wins! Well Played! 💙', 'defeat');
+        } else {
+            showCheerfulGameOver('🏆 Game Complete! 🏆', 'neutral');
+        }
+        return true;
+    }
+    
+    return false;
+}
+
+// Show cheerful game over message
+function showCheerfulGameOver(message, type) {
+    console.log('🎊 Game over:', message);
+    
+    // Update the game status with cheerful message
+    const gameStatus = document.getElementById('gameStatusText');
+    if (gameStatus) {
+        gameStatus.innerHTML = `<div style="
+            font-size: 18px; 
+            font-weight: bold; 
+            color: ${type === 'victory' ? '#4CAF50' : type === 'defeat' ? '#2196F3' : type === 'draw' ? '#FF9800' : '#333'};
+            text-align: center;
+            padding: 15px;
+            background: ${type === 'victory' ? 'rgba(76, 175, 80, 0.1)' : type === 'defeat' ? 'rgba(33, 150, 243, 0.1)' : 'rgba(255, 152, 0, 0.1)'};
+            border-radius: 8px;
+            border: 2px solid ${type === 'victory' ? '#4CAF50' : type === 'defeat' ? '#2196F3' : type === 'draw' ? '#FF9800' : '#333'};
+            margin: 10px 0;
+        ">${message}</div>`;
+    }
+    
+    // Hide resign button since game is over
+    const resignBtn = document.querySelector('button[onclick="resignGame()"]');
+    if (resignBtn) {
+        resignBtn.style.display = 'none';
+    }
+    
+    // Show a brief notification too
+    showNotification('🏁 Game Complete', message.replace(/[🎉💙🤝🏳️🎊🏆]/g, '').trim(), 
+                    type === 'victory' ? 'success' : type === 'defeat' ? 'info' : 'warning');
+}
+
+// Get AI player color (assumes AI is typically the second player - blue)
+function getAIPlayerColor() {
+    // Try to determine from game context
+    // This could be enhanced based on your specific game implementation
+    return 'blue'; // Default assumption
+}
+
+function highlightKingsInCheck(kingsInCheck) {
+    clearCheckHighlights();
+    kingsInCheck.forEach(king => {
+        const kingCell = document.querySelector(`[data-q="${king.q}"][data-r="${king.r}"]`);
+        if (kingCell) {
+            kingCell.classList.add('king-in-check');
+        }
+    });
+}
+
+function updateGameState(gameState) {
+    if (gameState.gameStatus.gameOver) {
+        console.log('🏁 Game over detected in updateGameState');
+        
+        // Let the checkAndHandleGameOver function handle the messaging
+        setTimeout(() => {
+            checkAndHandleGameOver();
+        }, 100);
+        
+        if (typeof userCanMove !== 'undefined') {
+            userCanMove = false;
+        }
+        
+        // Hide the resign button since game is over
+        const resignBtn = document.querySelector('button[onclick="resignGame()"]');
+        if (resignBtn) {
+            resignBtn.style.display = 'none';
+        }
+    }
+}
+
+// Main game functions for demo mode
+function newGame() {
+    if (typeof gameId === 'undefined') {
+        // Demo mode
+        location.reload();
+    } else {
+        // Real game mode
+        fetch(window.location.href, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: 'action=newgame'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            }
+        })
+        .catch(error => console.error('Error:', error));
+    }
+}
+
+function showMovementDemo() {
+    const modal = document.getElementById('demoModal');
+    if (modal) {
+        modal.style.display = 'flex';
+    }
+}
+
+function closeDemoModal() {
+    document.getElementById('demoModal').style.display = 'none';
+    const demoBoard = document.getElementById('demoBoard');
+    if (demoBoard) {
+        demoBoard.style.display = 'none';
+        demoBoard.innerHTML = '';
+    }
+    document.querySelectorAll('.demo-btn').forEach(btn => btn.classList.remove('active'));
+    document.getElementById('demoInfo').innerHTML = '<p>Select a piece above to see its movement pattern demonstrated on the full game board.</p>';
+}
+
+// DEMO FUNCTIONS
+function showPiece(pieceType) {
+    console.log('🎭 showPiece called for:', pieceType);
+    
+    if (window.demoProcessing) {
+        return;
+    }
+    
+    window.demoProcessing = true;
+    
+    try {
+        // Update UI
+        document.querySelectorAll('.piece-nav-btn').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        
+        const navButton = document.getElementById(`nav-${pieceType}`);
+        if (navButton) {
+            navButton.classList.add('active');
+        }
+        
+        document.querySelectorAll('.piece-desc').forEach(desc => {
+            desc.classList.remove('active');
+        });
+        
+        const descElement = document.getElementById(`desc-${pieceType}`);
+        if (descElement) {
+            descElement.classList.add('active');
+        }
+        
+        // Clear highlights
+        document.querySelectorAll('.hex-cell').forEach(cell => {
+            cell.classList.remove('selected', 'valid-move', 'capture-square');
+        });
+        
+        // Update piece and show pattern
+        updateBoardPiece(pieceType);
+        showMovementPattern(pieceType);
+        
+        console.log('✅ Demo complete for:', pieceType);
+        
+    } catch (error) {
+        console.error('❌ Error:', error);
+    } finally {
+        setTimeout(() => {
+            window.demoProcessing = false;
+        }, 100);
+    }
+}
+
+function updateBoardPiece(pieceType) {
+    const pieceIcons = {
+        'king': '♚', 'queen': '♛', 'rook': '♜',
+        'bishop': '♝', 'knight': '♞', 'pawn': '♟'
+    };
+    
+    let demoQ, demoR;
+    switch (pieceType) {
+        case 'pawn':
+            demoQ = -5; demoR = 0;
+            break;
+        default:
+            demoQ = 0; demoR = 0;
+    }
+    
+    // Clear all pieces
+    document.querySelectorAll('.hex-content').forEach(content => {
+        content.innerHTML = '';
+    });
+    
+    // Place new piece
+    const pieceCell = document.querySelector(`[data-q="${demoQ}"][data-r="${demoR}"]`);
+    if (pieceCell) {
+        const pieceContent = pieceCell.querySelector('.hex-content');
+        if (pieceContent) {
+            pieceContent.innerHTML = `<span class='piece red-piece'>${pieceIcons[pieceType]}</span>`;
+        }
+    }
+}
+
+function showMovementPattern(pieceType) {
+    let demoQ, demoR;
+    switch (pieceType) {
+        case 'pawn':
+            demoQ = -5; demoR = 0;
+            break;
+        default:
+            demoQ = 0; demoR = 0;
+    }
+    
+    // Highlight piece position
+    const pieceCell = document.querySelector(`[data-q="${demoQ}"][data-r="${demoR}"]`);
+    if (pieceCell) {
+        pieceCell.classList.add('selected');
+    }
+    
+    // Get moves and highlight them
+    const validMoves = getValidMovesForPiece(pieceType, demoQ, demoR);
+    
+    console.log(`🎯 ${pieceType} valid moves:`, validMoves.length);
+    
+    validMoves.forEach(move => {
+        const cell = document.querySelector(`[data-q="${move.q}"][data-r="${move.r}"]`);
+        if (cell) {
+            if (move.type === 'capture') {
+                cell.classList.add('capture-square');
+            } else {
+                cell.classList.add('valid-move');
+            }
+        }
+    });
+}
+
+function getValidMovesForPiece(pieceType, fromQ, fromR) {
+    const moves = [];
+    
+    switch (pieceType) {
+        case 'pawn':
+            moves.push({q: fromQ + 1, r: fromR, type: 'move'});
+            moves.push({q: fromQ + 1, r: fromR + 1, type: 'capture'});
+            moves.push({q: fromQ + 2, r: fromR - 1, type: 'capture'});
+            break;
+            
+        case 'bishop':
+            const bishopDirections = [
+                [1, 1], [-1, -1],
+                [2, -1], [-2, 1],
+                [1, -2], [-1, 2]
+            ];
+            
+            bishopDirections.forEach(([dq, dr]) => {
+                for (let step = 1; step <= 8; step++) {
+                    const newQ = fromQ + dq * step;
+                    const newR = fromR + dr * step;
+                    
+                    if (Math.abs(newQ) <= 8 && Math.abs(newR) <= 8 && Math.abs(newQ + newR) <= 8) {
+                        moves.push({q: newQ, r: newR, type: 'move'});
+                    } else {
+                        break;
+                    }
+                }
+            });
+            break;
+            
+        case 'queen':
+            const queenDirections = [
+                [1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1],
+                [1, 1], [-1, -1], [2, -1], [-2, 1], [1, -2], [-1, 2]
+            ];
+            
+            queenDirections.forEach(([dq, dr]) => {
+                for (let step = 1; step <= 8; step++) {
+                    const newQ = fromQ + dq * step;
+                    const newR = fromR + dr * step;
+                    
+                    if (Math.abs(newQ) <= 8 && Math.abs(newR) <= 8 && Math.abs(newQ + newR) <= 8) {
+                        moves.push({q: newQ, r: newR, type: 'move'});
+                    } else {
+                        break;
+                    }
+                }
+            });
+            break;
+            
+        case 'rook':
+            const rookDirections = [
+                [1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1]
+            ];
+            
+            rookDirections.forEach(([dq, dr]) => {
+                for (let step = 1; step <= 8; step++) {
+                    const newQ = fromQ + dq * step;
+                    const newR = fromR + dr * step;
+                    
+                    if (Math.abs(newQ) <= 8 && Math.abs(newR) <= 8 && Math.abs(newQ + newR) <= 8) {
+                        moves.push({q: newQ, r: newR, type: 'move'});
+                    } else {
+                        break;
+                    }
+                }
+            });
+            break;
+            
+        case 'knight':
+            const knightMoves = [
+                [2, 1], [3, -1], [1, 2], [-1, 3],
+                [-2, 3], [-3, 2], [-3, 1], [-2, -1],
+                [-1, -2], [1, -3], [2, -3], [3, -2]
+            ];
+            
+            knightMoves.forEach(([dq, dr]) => {
+                const newQ = fromQ + dq;
+                const newR = fromR + dr;
+                
+                if (Math.abs(newQ) <= 8 && Math.abs(newR) <= 8 && Math.abs(newQ + newR) <= 8) {
+                    moves.push({q: newQ, r: newR, type: 'move'});
+                }
+            });
+            break;
+            
+        case 'king':
+            const kingMoves = [
+                [1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1],
+                [1, 1], [-1, -1], [2, -1], [-2, 1], [1, -2], [-1, 2]
+            ];
+            
+            kingMoves.forEach(([dq, dr]) => {
+                const newQ = fromQ + dq;
+                const newR = fromR + dr;
+                
+                if (Math.abs(newQ) <= 8 && Math.abs(newR) <= 8 && Math.abs(newQ + newR) <= 8) {
+                    moves.push({q: newQ, r: newR, type: 'move'});
+                }
+            });
+            break;
+    }
+    
+    return moves;
+}
+
+// Auto-load demo
+function initializeDemoPage() {
+    console.log('🚀 Initializing demo page with king moves');
+    
+    setTimeout(() => {
+        showPiece('king');
+    }, 500);
+}
+
+// Event listeners
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('🚀 Game.js initialized');
+    
+    // Demo page auto-init
+    if (window.location.search.includes('page=demo')) {
+        console.log('📚 Demo page detected, will auto-show king moves');
+        initializeDemoPage();
+    }
+    // Check if we need to trigger AI after a page reload
+    if (localStorage.getItem('triggerAIAfterReload') === 'true') {
+        const storedGameId = localStorage.getItem('aiGameId');
+        
+        // Clear the flags
+        localStorage.removeItem('triggerAIAfterReload');
+        localStorage.removeItem('aiGameId');
+        
+        // Verify we're still in the same game
+        if (typeof gameId !== 'undefined' && gameId === storedGameId) {
+            console.log('🤖 Triggering AI move after reload...');
+            
+            setTimeout(() => {
+                // Check if it's AI's turn before triggering
+                if (typeof userCanMove !== 'undefined' && !userCanMove) {
+                    testAIMoveSubmission(); // This calls the working AI endpoint
+                }
+            }, 2000); // 2 second delay to ensure page is fully loaded
+        }
+    }
+
+    const modal = document.getElementById('demoModal');
+    if (modal) {
+        modal.addEventListener('click', function(e) {
+            if (e.target === modal) {
+                closeDemoModal();
+            }
+        });
+    }
+    
+    // Load available games if on lobby page
+    if (document.getElementById('available-games')) {
+        loadAvailableGames();
+    }
+    
+    // Load user's games if on lobby page
+    if (document.getElementById('my-games')) {
+        loadMyGames();
+    }
+
+    // Apply hover effects to all hex cells (for pieces)
+    applyHoverEffects();
+    
+    // Auto-trigger AI move if it's an AI game and AI's turn
+    if (isAIGameEnhanced()) {
+        console.log('🤖 AI game detected, will check for AI turn...');
+        autoTriggerAI();
+        
+        // Set up periodic AI checks (but respect game over state)
+        window.aiPeriodicCheck = setInterval(() => {
+            if (isGameOver()) {
+                console.log('🏁 Game over detected in periodic check, stopping interval');
+                clearInterval(window.aiPeriodicCheck);
+                window.aiPeriodicCheck = null;
+                return;
+            }
+            
+            if (isAIGameEnhanced() && shouldAIMoveNow()) {
+                console.log('🤖 Periodic AI check: triggering AI move');
+                checkForAIMove();
+            }
+        }, 5000); // Check every 5 seconds
+    }
+    
+    // Check for game over state on page load
+    setTimeout(() => {
+        if (isGameOver()) {
+            console.log('🏁 Game over detected on page load');
+            checkAndHandleGameOver();
+        }
+    }, 1000);
+    
+    // Keyboard event listeners
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            const modal = document.getElementById('demoModal');
+            const demoBoard = document.getElementById('demoBoard');
+            if (modal && modal.style.display === 'flex') {
+                if (demoBoard && demoBoard.style.display === 'block') {
+                    demoBoard.style.display = 'none';
+                    demoBoard.innerHTML = '';
+                    document.querySelectorAll('.demo-btn').forEach(btn => btn.classList.remove('active'));
+                    document.getElementById('demoInfo').innerHTML = '<p>Select a piece above to see its movement pattern demonstrated on the full game board.</p>';
+                } else {
+                    closeDemoModal();
+                }
+            } else {
+                clearSelection();
+            }
+        }
+        
+        // Developer shortcut: Press 'T' to trigger AI move manually
+        if (e.key === 't' || e.key === 'T') {
+            if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                console.log('🤖 Manual AI trigger (Ctrl+T)');
+                triggerAIMove();
+            }
+        }
+        
+        // Debug shortcut: Press 'D' for AI debug info
+        if (e.key === 'd' || e.key === 'D') {
+            if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                console.log('🔍 AI Debug trigger (Ctrl+D)');
+                debugAI();
+            }
+        }
+        
+        // Emergency stop: Press 'S' to stop AI
+        if (e.key === 's' || e.key === 'S') {
+            if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                console.log('🛑 Emergency AI stop (Ctrl+S)');
+                forceGameOver('Emergency keyboard stop');
+            }
+        }
+    });
+
+// Auto-trigger AI after reload
+    if (sessionStorage.getItem('triggerAI') === 'true') {
+        sessionStorage.removeItem('triggerAI');
+        console.log('🤖 Auto-triggering AI after reload...');
+        
+        setTimeout(() => {
+            if (typeof userCanMove !== 'undefined' && !userCanMove) {
+                console.log('🤖 Executing AI move...');
+                fetch(window.location.href, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: 'action=ai_move&game_id=' + gameId
+                }).then(r => r.text()).then(text => {
+                    console.log('🤖 AI Response:', text);
+                    setTimeout(() => location.reload(), 1000);
+                });
+            }
+        }, 2000);
+    }
+//
+// Simple auto-trigger check every few seconds
+// Use the PHP boolean instead of the JS function
+    if (typeof gameMode !== 'undefined' && gameMode === 'ai') {
+        console.log('🤖 Setting up auto-trigger timer for AI game...');
+        
+        let checkCount = 0;
+        const autoTriggerTimer = setInterval(() => {
+            checkCount++;
+            console.log(`🤖 Auto-trigger check #${checkCount}, userCanMove: ${userCanMove}`);
+            
+            if (typeof userCanMove !== 'undefined' && !userCanMove) {
+                console.log('🤖 AI turn detected, triggering move...');
+                clearInterval(autoTriggerTimer);
+                
+                setTimeout(() => {
+                    fetch(window.location.href, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: 'action=ai_move&game_id=' + gameId
+                    }).then(r => r.text()).then(text => {
+                        console.log('🤖 Auto AI Response:', text);
+                        setTimeout(() => location.reload(), 1000);
+                    });
+                }, 1000);
+            }
+            
+            // Stop checking after 10 attempts (30 seconds)
+            if (checkCount >= 10) {
+                console.log('🤖 Auto-trigger timeout');
+                clearInterval(autoTriggerTimer);
+            }
+        }, 3000); // Check every 3 seconds
+    }
+        //
+});
+
+// Function to apply hover effects to hex cells
+function applyHoverEffects() {
+    document.querySelectorAll('.hex-cell').forEach(cell => {
+        // Remove any existing event listeners to prevent duplicates
+        cell.removeEventListener('mouseenter', handlePieceHover);
+        cell.removeEventListener('mouseleave', handlePieceLeave);
+        
+        // Add the hover event listeners
+        cell.addEventListener('mouseenter', handlePieceHover);
+        cell.addEventListener('mouseleave', handlePieceLeave);
+    });
+}
+
+function handlePieceHover() {
+    const piece = this.querySelector('.piece');
+    if (piece) {
+        // Combine centering AND scaling transforms
+        piece.style.transform = 'translate(-50%, -50%) scale(1.15)';
+        piece.style.transition = 'transform 0.2s ease';
+    }
+}
+
+function handlePieceLeave() {
+    const piece = this.querySelector('.piece');
+    if (piece) {
+        // Reset to just centering transform
+        piece.style.transform = 'translate(-50%, -50%) scale(1)';
+    }
+}
+
+// Helper functions
+function isValidHex(q, r) {
+    const BOARD_SIZE = 8;
+    return Math.abs(q) <= BOARD_SIZE && 
+           Math.abs(r) <= BOARD_SIZE && 
+           Math.abs(q + r) <= BOARD_SIZE;
+}
+
+function getCellColor(q, r) {
+    const colorIndex = ((q - r) % 3 + 3) % 3;
+    const colors = ['pastel-red', 'pastel-green', 'pastel-blue'];
+    return colors[colorIndex];
+}
+
+function showPieceDemo(pieceType) {
+    showPiece(pieceType);
+}
+
+// Demo AI functionality - can be used to test AI in demo mode
+function testAIInDemo() {
+    console.log('🤖 Testing AI in demo mode...');
+    
+    // Force enable AI mode for testing
+    window.forceAIMode = true;
+    
+    // Create a simple test scenario
+    const demoGameId = 'demo-ai-test';
+    
+    // Temporarily set gameId for testing
+    window.gameId = demoGameId;
+    
+    // Show AI thinking
+    showAIThinking();
+    
+    // Test the client-side AI
+    setTimeout(() => {
+        makeClientSideAIMove();
+    }, 1000);
+}
+
+// Force AI to move (for testing/debugging)
+function forceAIMove() {
+    console.log('🤖 FORCING AI MOVE...');
+    
+    // Override all checks
+    window.forceAIMode = true;
+    
+    if (typeof gameId === 'undefined') {
+        window.gameId = 'test-game-' + Date.now();
+        console.log('🤖 Created test gameId:', window.gameId);
+    }
+    
+    // Show thinking indicator
+    showAIThinking();
+    
+    // Force client-side AI move
+    setTimeout(() => {
+        makeClientSideAIMove();
+    }, 500);
+}
+
+// Enhanced isAIGame to include forced mode
+function isAIGameEnhanced() {
+    // Always check game over first
+    if (isGameOver()) {
+        console.log('🏁 Game is over, not AI game anymore');
+        return false;
+    }
+    
+    if (window.forceAIMode) {
+        console.log('✅ AI game detected (forced mode)');
+        return true;
+    }
+    
+    return isAIGame();
+}
+
+// Add comprehensive debug information including game over state
+function debugAI() {
+    console.log('🔍 AI DEBUG INFORMATION:');
+    console.log('------------------------');
+    console.log('gameId:', typeof gameId !== 'undefined' ? gameId : 'UNDEFINED');
+    console.log('userCanMove:', typeof userCanMove !== 'undefined' ? userCanMove : 'UNDEFINED');
+    console.log('gameOverDetected (global):', gameOverDetected);
+    console.log('isGameOver():', isGameOver());
+    console.log('isAIGame():', isAIGame());
+    console.log('isAIGameEnhanced():', isAIGameEnhanced());
+    console.log('forceAIMode:', window.forceAIMode || false);
+    console.log('aiPeriodicCheck active:', !!window.aiPeriodicCheck);
+    console.log('URL:', window.location.href);
+    console.log('URL params:', new URLSearchParams(window.location.search).toString());
+    
+    const gameStatus = document.getElementById('gameStatusText');
+    console.log('gameStatusText:', gameStatus ? gameStatus.textContent : 'NOT FOUND');
+    
+    const boardState = getBoardState();
+    console.log('Board pieces found:', boardState ? boardState.pieces.length : 'NO BOARD STATE');
+    
+    if (boardState) {
+        console.log('AI pieces (blue):', boardState.pieces.filter(p => p.player === 'blue').length);
+        console.log('Human pieces (red):', boardState.pieces.filter(p => p.player === 'red').length);
+        
+        const redKing = boardState.pieces.filter(p => p.player === 'red').find(p => p.type === 'king');
+        const blueKing = boardState.pieces.filter(p => p.player === 'blue').find(p => p.type === 'king');
+        console.log('Red king exists:', !!redKing);
+        console.log('Blue king exists:', !!blueKing);
+    }
+    
+    // Check all potential AI indicators
+    console.log('AI indicators in page:');
+    const aiElements = document.querySelectorAll('[class*="ai"], [class*="bot"], [data-ai-game]');
+    aiElements.forEach(el => {
+        console.log('- Found AI element:', el.tagName, el.className, el.textContent.substring(0, 50));
+    });
+    
+    // Check game over indicators
+    console.log('Game over indicators:');
+    const gameOverElements = document.querySelectorAll('[class*="game-over"], [class*="ended"], [class*="finished"], [class*="checkmate"], [class*="stalemate"]');
+    gameOverElements.forEach(el => {
+        console.log('- Found game over element:', el.tagName, el.className, el.textContent.substring(0, 50));
+    });
+    
+    // Check resign button
+    const resignBtn = document.querySelector('button[onclick="resignGame()"]');
+    console.log('Resign button exists:', !!resignBtn);
+    console.log('Resign button hidden:', resignBtn ? resignBtn.style.display === 'none' : 'N/A');
+}
+
+// =============================================================================
+// DEBUG SECTION - Add this at the very end of game.js
+// =============================================================================
+
+// Debug game state function
+function debugGameState() {
+    console.log('🔍 DEBUGGING GAME STATE:');
+    console.log('gameId:', typeof gameId !== 'undefined' ? gameId : 'UNDEFINED');
+    console.log('userCanMove:', typeof userCanMove !== 'undefined' ? userCanMove : 'UNDEFINED');
+    console.log('gameMode:', typeof gameMode !== 'undefined' ? gameMode : 'UNDEFINED');
+    console.log('isAIGame:', typeof isAIGame !== 'undefined' ? isAIGame : 'UNDEFINED');
+    console.log('currentPlayerSlot:', typeof currentPlayerSlot !== 'undefined' ? currentPlayerSlot : 'UNDEFINED');
+    console.log('userPlayerSlot:', typeof userPlayerSlot !== 'undefined' ? userPlayerSlot : 'UNDEFINED');
+    console.log('aiPlayerSlot:', typeof aiPlayerSlot !== 'undefined' ? aiPlayerSlot : 'UNDEFINED');
+}
+
+// Test AI move submission
+function testAIMoveSubmission() {
+    console.log('🤖 Testing AI move submission...');
+    
+    const testData = new URLSearchParams({
+        action: 'ai_move',
+        game_id: typeof gameId !== 'undefined' ? gameId : 'unknown'
+    });
+    
+    fetch(window.location.href, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: testData.toString()
+    })
+    .then(response => response.text())
+    .then(text => {
+        console.log('📡 Raw server response:', text);
+        try {
+            const data = JSON.parse(text);
+            console.log('📡 Parsed response:', data);
+        } catch (e) {
+            console.error('❌ Could not parse JSON, raw response:', text);
+        }
+    })
+    .catch(error => {
+        console.error('❌ Fetch error:', error);
+    });
+}
+
+
+console.log('✅ Complete game.js loaded successfully');

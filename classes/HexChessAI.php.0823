@@ -1,0 +1,362 @@
+<?php
+
+class HexChessAI {
+    private $game;
+    private $difficulty;
+    private $playerSlot;
+    
+    // Piece values for evaluation
+    private $pieceValues = [
+        'pawn' => 1,
+        'knight' => 3,
+        'bishop' => 3,
+        'rook' => 5,
+        'queen' => 9,
+        'king' => 1000
+    ];
+    
+    public function __construct($game, $difficulty = 'medium', $playerSlot = 1) {
+        $this->game = $game;
+        $this->difficulty = $difficulty;
+        $this->playerSlot = $playerSlot;
+    }
+    
+    /**
+     * Get the best move for the current AI player
+     */
+    public function getBestMove() {
+        $validMoves = $this->getAllValidMoves();
+        
+        if (empty($validMoves)) {
+            return null; // No legal moves
+        }
+        
+        switch ($this->difficulty) {
+            case 'easy':
+                return $this->getRandomMove($validMoves);
+                
+            case 'medium':
+                return $this->getMediumMove($validMoves);
+                
+            case 'hard':
+                return $this->getHardMove($validMoves);
+                
+            default:
+                return $this->getMediumMove($validMoves);
+        }
+    }
+    
+    /**
+     * Easy AI - Random legal moves
+     */
+    private function getRandomMove($validMoves) {
+        return $validMoves[array_rand($validMoves)];
+    }
+    
+    /**
+     * Medium AI - Basic position evaluation
+     */
+    private function getMediumMove($validMoves) {
+        $bestMove = null;
+        $bestScore = -9999;
+        
+        foreach ($validMoves as $move) {
+            $score = $this->evaluateMove($move);
+            
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                $bestMove = $move;
+            }
+        }
+        
+        return $bestMove ?: $this->getRandomMove($validMoves);
+    }
+    
+    /**
+     * Hard AI - Minimax with limited depth
+     */
+    private function getHardMove($validMoves) {
+        $bestMove = null;
+        $bestScore = -9999;
+        
+        foreach ($validMoves as $move) {
+            // Simulate the move
+            $originalPiece = $this->game->getPiece($move['toQ'], $move['toR']);
+            $movingPiece = $this->game->getPiece($move['fromQ'], $move['fromR']);
+            
+            // Make temporary move
+            $this->game->board[$move['toQ']][$move['toR']] = $movingPiece;
+            $this->game->board[$move['fromQ']][$move['fromR']] = null;
+            
+            // Evaluate position after move
+            $score = $this->minimax(2, false, -10000, 10000);
+            
+            // Undo move
+            $this->game->board[$move['fromQ']][$move['fromR']] = $movingPiece;
+            $this->game->board[$move['toQ']][$move['toR']] = $originalPiece;
+            
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                $bestMove = $move;
+            }
+        }
+        
+        return $bestMove ?: $this->getMediumMove($validMoves);
+    }
+    
+    /**
+     * Minimax algorithm with alpha-beta pruning
+     */
+    private function minimax($depth, $maximizing, $alpha, $beta) {
+        if ($depth == 0) {
+            return $this->evaluatePosition();
+        }
+        
+        $moves = $this->getAllValidMoves();
+        
+        if ($maximizing) {
+            $maxEval = -10000;
+            foreach ($moves as $move) {
+                // Simulate move
+                $originalPiece = $this->game->getPiece($move['toQ'], $move['toR']);
+                $movingPiece = $this->game->getPiece($move['fromQ'], $move['fromR']);
+                
+                $this->game->board[$move['toQ']][$move['toR']] = $movingPiece;
+                $this->game->board[$move['fromQ']][$move['fromR']] = null;
+                
+                $eval = $this->minimax($depth - 1, false, $alpha, $beta);
+                
+                // Undo move
+                $this->game->board[$move['fromQ']][$move['fromR']] = $movingPiece;
+                $this->game->board[$move['toQ']][$move['toR']] = $originalPiece;
+                
+                $maxEval = max($maxEval, $eval);
+                $alpha = max($alpha, $eval);
+                
+                if ($beta <= $alpha) {
+                    break; // Alpha-beta pruning
+                }
+            }
+            return $maxEval;
+        } else {
+            $minEval = 10000;
+            foreach ($moves as $move) {
+                // Similar logic for minimizing player
+                $originalPiece = $this->game->getPiece($move['toQ'], $move['toR']);
+                $movingPiece = $this->game->getPiece($move['fromQ'], $move['fromR']);
+                
+                $this->game->board[$move['toQ']][$move['toR']] = $movingPiece;
+                $this->game->board[$move['fromQ']][$move['fromR']] = null;
+                
+                $eval = $this->minimax($depth - 1, true, $alpha, $beta);
+                
+                $this->game->board[$move['fromQ']][$move['fromR']] = $movingPiece;
+                $this->game->board[$move['toQ']][$move['toR']] = $originalPiece;
+                
+                $minEval = min($minEval, $eval);
+                $beta = min($beta, $eval);
+                
+                if ($beta <= $alpha) {
+                    break;
+                }
+            }
+            return $minEval;
+        }
+    }
+    
+    /**
+     * Evaluate a single move
+     */
+    private function evaluateMove($move) {
+        $score = 0;
+        
+        // Capture value
+        $capturedPiece = $this->game->getPiece($move['toQ'], $move['toR']);
+        if ($capturedPiece && $capturedPiece->player !== $this->playerSlot) {
+            $score += $this->pieceValues[$capturedPiece->type];
+        }
+        
+        // Center control bonus
+        $centerDistance = abs($move['toQ']) + abs($move['toR']) + abs($move['toQ'] + $move['toR']);
+        $score += (10 - $centerDistance) * 0.1;
+        
+        // King safety - penalize moves that expose king
+        if ($this->wouldExposeKing($move)) {
+            $score -= 5;
+        }
+        
+        // Random factor for less predictable play
+        $score += (rand(0, 100) / 100) * 0.5;
+        
+        return $score;
+    }
+    
+    /**
+     * Evaluate the entire board position
+     */
+    private function evaluatePosition() {
+        $score = 0;
+        
+        for ($q = -$this->game->getBoardSize(); $q <= $this->game->getBoardSize(); $q++) {
+            for ($r = max(-$this->game->getBoardSize(), -$q - $this->game->getBoardSize()); 
+                 $r <= min($this->game->getBoardSize(), -$q + $this->game->getBoardSize()); $r++) {
+                
+                $piece = $this->game->getPiece($q, $r);
+                if ($piece) {
+                    $pieceValue = $this->pieceValues[$piece->type];
+                    
+                    if ($piece->player === $this->playerSlot) {
+                        $score += $pieceValue;
+                    } else {
+                        $score -= $pieceValue;
+                    }
+                    
+                    // Position bonuses
+                    $score += $this->getPositionBonus($piece, $q, $r);
+                }
+            }
+        }
+        
+        // King safety evaluation
+        if ($this->game->isKingInCheck($this->playerSlot)) {
+            $score -= 10;
+        }
+        
+        // Mobility bonus
+        $ourMoves = count($this->getAllValidMovesForPlayer($this->playerSlot));
+        $theirMoves = count($this->getAllValidMovesForPlayer(1 - $this->playerSlot));
+        $score += ($ourMoves - $theirMoves) * 0.1;
+        
+        return $score;
+    }
+    
+    /**
+     * Get position bonus for piece placement
+     */
+    private function getPositionBonus($piece, $q, $r) {
+        $bonus = 0;
+        $centerDistance = abs($q) + abs($r) + abs($q + $r);
+        
+        switch ($piece->type) {
+            case 'pawn':
+                // Pawns like to advance
+                if ($piece->player === $this->playerSlot) {
+                    $bonus += ($this->game->getBoardSize() - $centerDistance) * 0.1;
+                }
+                break;
+                
+            case 'knight':
+            case 'bishop':
+                // Minor pieces like center control
+                $bonus += (10 - $centerDistance) * 0.05;
+                break;
+                
+            case 'king':
+                // King safety - prefer edges early game
+                $bonus += $centerDistance * 0.02;
+                break;
+        }
+        
+        return $piece->player === $this->playerSlot ? $bonus : -$bonus;
+    }
+    
+    /**
+     * Check if a move would expose our king
+     */
+    private function wouldExposeKing($move) {
+        // Simulate the move
+        $originalPiece = $this->game->getPiece($move['toQ'], $move['toR']);
+        $movingPiece = $this->game->getPiece($move['fromQ'], $move['fromR']);
+        
+        $this->game->board[$move['toQ']][$move['toR']] = $movingPiece;
+        $this->game->board[$move['fromQ']][$move['fromR']] = null;
+        
+        $inCheck = $this->game->isKingInCheck($this->playerSlot);
+        
+        // Undo the move
+        $this->game->board[$move['fromQ']][$move['fromR']] = $movingPiece;
+        $this->game->board[$move['toQ']][$move['toR']] = $originalPiece;
+        
+        return $inCheck;
+    }
+    
+    /**
+     * Get all valid moves for current AI player
+     */
+    private function getAllValidMoves() {
+        return $this->getAllValidMovesForPlayer($this->playerSlot);
+    }
+    
+    /**
+     * Get all valid moves for a specific player
+     */
+    private function getAllValidMovesForPlayer($player) {
+        $moves = [];
+        
+        for ($q = -$this->game->getBoardSize(); $q <= $this->game->getBoardSize(); $q++) {
+            for ($r = max(-$this->game->getBoardSize(), -$q - $this->game->getBoardSize()); 
+                 $r <= min($this->game->getBoardSize(), -$q + $this->game->getBoardSize()); $r++) {
+                
+                $piece = $this->game->getPiece($q, $r);
+                if ($piece && $piece->player === $player) {
+                    $pieceMoves = $this->game->getValidMoves($q, $r);
+                    
+                    foreach ($pieceMoves as $move) {
+                        $moves[] = [
+                            'fromQ' => $q,
+                            'fromR' => $r,
+                            'toQ' => $move['q'],
+                            'toR' => $move['r']
+                        ];
+                    }
+                }
+            }
+        }
+        
+        return $moves;
+    }
+    
+    /**
+     * Make the AI move
+     */
+    public function makeMove() {
+        $move = $this->getBestMove();
+        
+        if ($move) {
+            error_log("AI ({$this->difficulty}) making move: ({$move['fromQ']},{$move['fromR']}) -> ({$move['toQ']},{$move['toR']})");
+            return $this->game->movePiece($move['fromQ'], $move['fromR'], $move['toQ'], $move['toR']);
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Get AI thinking time (for realistic feel)
+     */
+    public function getThinkingTime() {
+        switch ($this->difficulty) {
+            case 'easy':
+                return rand(500, 1500); // 0.5-1.5 seconds
+            case 'medium':
+                return rand(1000, 3000); // 1-3 seconds
+            case 'hard':
+                return rand(2000, 5000); // 2-5 seconds
+            default:
+                return rand(1000, 2000);
+        }
+    }
+    
+    /**
+     * Get AI personality name
+     */
+    public function getAIName() {
+        $names = [
+            'easy' => ['Rookie', 'Cadet', 'Novice', 'Learner'],
+            'medium' => ['Knight', 'Captain', 'Warrior', 'Guardian'],
+            'hard' => ['Master', 'Grandmaster', 'Champion', 'Legend']
+        ];
+        
+        $difficultyNames = $names[$this->difficulty] ?? $names['medium'];
+        return $difficultyNames[array_rand($difficultyNames)];
+    }
+}

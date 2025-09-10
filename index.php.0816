@@ -1,0 +1,1036 @@
+<?php
+// Add better error handling
+ini_set('display_errors', 0);  // Turn OFF HTML errors
+error_reporting(E_ALL);
+ini_set('log_errors', 1);      // Log errors instead
+
+session_start();
+
+if (!class_exists('PoohGame')) {
+    class PoohGame {
+        public function __wakeup() { /* do nothing */ }
+    }
+}
+
+// Include configuration and classes
+require_once 'config/database.php';
+require_once 'classes/Piece.php';
+require_once 'classes/User.php';
+require_once 'classes/GameManager.php';
+require_once 'classes/HexChess.php';
+require_once 'classes/HexChessAI.php';  // NEW: Include AI class
+require_once 'utils/render.php';
+
+// Initialize core objects
+$user = new User($pdo);
+$gameManager = new GameManager($pdo);
+
+// Handle API requests (GET)
+if (isset($_GET['api'])) {
+    header('Content-Type: application/json');
+    
+    switch ($_GET['api']) {
+
+case 'games':
+    try {
+        $stmt = $pdo->prepare("
+            SELECT 
+                g.game_id,
+                g.game_name,
+                g.status,
+                g.player_count,
+                g.game_mode,
+                g.ai_difficulty,
+                COUNT(gp.user_id) as current_players,
+                creator.username as creator,
+                GROUP_CONCAT(u.username SEPARATOR ', ') as player_names
+            FROM games g
+            LEFT JOIN game_players gp ON g.game_id = gp.game_id
+            LEFT JOIN users creator ON g.creator_id = creator.id
+            LEFT JOIN users u ON gp.user_id = u.id
+            WHERE g.status = 'waiting'
+            AND (g.game_type = 'chess' OR g.game_type = 'hexchess' OR g.game_type IS NULL)
+            GROUP BY g.game_id
+            ORDER BY g.created_at DESC
+            LIMIT 20
+        ");
+        
+        $stmt->execute();
+        $games = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        // Format for frontend
+        $result = array_map(function($game) {
+            return [
+                'game_id' => $game['game_id'],
+                'game_name' => $game['game_name'] ?: 'Unnamed Game',
+                'status' => $game['status'],
+                'player_count' => (int)$game['player_count'],
+                'current_players' => (int)$game['current_players'],
+                'creator' => $game['creator'],
+                'player_names' => $game['player_names'],
+                'game_mode' => $game['game_mode'],
+                'ai_difficulty' => $game['ai_difficulty']
+            ];
+        }, $games);
+        
+        echo json_encode($result);
+    } catch (Exception $e) {
+        echo json_encode(['error' => 'Database error: ' . $e->getMessage()]);
+    }
+    exit;
+
+
+case 'my-games':
+    if (!isset($_SESSION['user_id'])) {
+        http_response_code(401);
+        header('Content-Type: application/json');
+        echo json_encode(['error' => 'Authentication required']);
+        exit;
+    }
+    
+    try {
+        // Enhanced query to get player names
+        $stmt = $pdo->prepare("
+            SELECT 
+                g.game_id,
+                g.game_name,
+                g.status,
+                g.player_count,
+                g.game_mode,
+                g.ai_difficulty,
+                gp.player_slot,
+                w.username as winner_name,
+                GROUP_CONCAT(
+                    CASE 
+                        WHEN u.id = ? THEN CONCAT(u.username, ' (You)')
+                        WHEN g.game_mode = 'ai' AND u.id != ? THEN 
+                            CASE g.ai_difficulty
+                                WHEN 'easy' THEN 'Easy AI'
+                                WHEN 'medium' THEN 'Medium AI' 
+                                WHEN 'hard' THEN 'Hard AI'
+                                ELSE 'AI'
+                            END
+                        ELSE u.username
+                    END 
+                    ORDER BY gp2.player_slot 
+                    SEPARATOR ' vs '
+                ) as player_names
+            FROM games g
+            JOIN game_players gp ON g.game_id = gp.game_id
+            JOIN game_players gp2 ON g.game_id = gp2.game_id
+            JOIN users u ON gp2.user_id = u.id
+            LEFT JOIN users w ON g.winner_id = w.id
+            WHERE gp.user_id = ?
+            AND g.status IN ('waiting', 'active', 'finished')
+            AND (g.game_type = 'chess' OR g.game_type = 'hexchess' OR g.game_type IS NULL)
+            GROUP BY g.game_id, gp.player_slot
+            ORDER BY g.created_at DESC
+            LIMIT 20
+        ");
+        
+        $stmt->execute([$_SESSION['user_id'], $_SESSION['user_id'], $_SESSION['user_id']]);
+        $games = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        // Format for frontend
+        $result = array_map(function($game) {
+            return [
+                'game_id' => $game['game_id'],
+                'game_name' => $game['game_name'] ?: 'Unnamed Game',
+                'status' => $game['status'],
+                'player_count' => (int)$game['player_count'],
+                'current_players' => (int)$game['player_count'],
+                'is_your_turn' => false, // Will be calculated on frontend if needed
+                'winner_name' => $game['winner_name'],
+                'player_names' => $game['player_names'],
+                'game_mode' => $game['game_mode'] ?? 'multiplayer'
+            ];
+        }, $games);
+        
+        header('Content-Type: application/json');
+        echo json_encode($result);
+        exit;
+        
+    } catch (Exception $e) {
+        header('Content-Type: application/json');
+        echo json_encode([
+            'error' => 'Database error',
+            'message' => $e->getMessage()
+        ]);
+        exit;
+    }
+    break;
+
+        default:
+            echo json_encode(['error' => 'Unknown API endpoint']);
+            exit;
+    }
+    
+}
+
+
+// Handle AJAX POST requests for lobby actions
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    header('Content-Type: application/json');
+    
+    try {
+        switch ($_POST['action']) {
+            case 'create_game':
+                if (!isset($_SESSION['user_id'])) {
+                    echo json_encode(['success' => false, 'error' => 'Not logged in']);
+                    exit;
+                }
+                
+                $gameName = trim($_POST['game_name'] ?? '');
+                $gameMode = trim($_POST['game_mode'] ?? 'multiplayer');
+                $playerCount = (int)($_POST['player_count'] ?? 2);
+                $boardSize = (int)($_POST['board_size'] ?? 7);
+                $aiDifficulty = trim($_POST['ai_difficulty'] ?? 'medium');
+                
+                if (empty($gameName)) {
+                    echo json_encode(['success' => false, 'error' => 'Game name is required']);
+                    exit;
+                }
+                
+                // For AI games, force 2 players
+                if ($gameMode === 'ai') {
+                    $playerCount = 2;
+                }
+                
+                if ($playerCount < 2 || $playerCount > 3) {
+                    echo json_encode(['success' => false, 'error' => 'Invalid player count']);
+                    exit;
+                }
+                
+                // Create the game
+                $gameId = $gameManager->createGame($_SESSION['user_id'], $gameName, $playerCount, $boardSize, $gameMode, $aiDifficulty);
+                
+                if ($gameId) {
+                    echo json_encode(['success' => true, 'game_id' => $gameId]);
+                } else {
+                    echo json_encode(['success' => false, 'error' => 'Failed to create game']);
+                }
+                exit;
+                
+  
+            case 'join_game':
+                if (!isset($_SESSION['user_id'])) {
+                    echo json_encode(['success' => false, 'error' => 'Not logged in']);
+                    exit;
+                }
+                
+                $gameId = trim($_POST['game_id'] ?? '');
+                
+                if (empty($gameId)) {
+                    echo json_encode(['success' => false, 'error' => 'Game ID is required']);
+                    exit;
+                }
+                
+                // Try to join the game
+                $result = $gameManager->joinGame($gameId, $_SESSION['user_id']);
+                
+                if ($result === true) {
+                    echo json_encode(['success' => true]);
+                } else {
+                    echo json_encode(['success' => false, 'error' => $result ?: 'Failed to join game']);
+                }
+                exit;
+
+            case 'resign':
+                if (!isset($_SESSION['user_id'])) {
+                    echo json_encode(['success' => false, 'error' => 'Not logged in']);
+                    exit;
+                }
+                
+                $gameId = trim($_POST['game_id'] ?? '');
+                
+                if (empty($gameId)) {
+                    echo json_encode(['success' => false, 'error' => 'Game ID required']);
+                    exit;
+                }
+                
+                $gameInfo = $gameManager->getGame($gameId);
+                if (!$gameInfo) {
+                    echo json_encode(['success' => false, 'error' => 'Game not found']);
+                    exit;
+                }
+                
+                $game = $gameInfo['game'];
+                $gameData = $gameInfo['data'];
+                
+                // Check if game is active
+                if ($gameData['status'] !== 'active') {
+                    echo json_encode(['success' => false, 'error' => 'Game is not active']);
+                    exit;
+                }
+                
+                // Find the player's slot
+                $userPlayerSlot = null;
+                foreach ($gameInfo['players'] as $player) {
+                    if ($player['user_id'] == $_SESSION['user_id']) {
+                        $userPlayerSlot = $player['player_slot'];
+                        break;
+                    }
+                }
+                
+                if ($userPlayerSlot === null) {
+                    echo json_encode(['success' => false, 'error' => 'You are not in this game']);
+                    exit;
+                }
+                
+                // Process resignation
+                $result = $game->resignPlayer($userPlayerSlot);
+                
+                if ($result === true) {
+                    // Save the updated game state
+                    $gameManager->updateGameState($gameId, $game);
+                    
+                    // Check if game is over and finish it
+                    $gameState = $game->getGameState();
+                    if ($gameState['gameStatus']['gameOver']) {
+                        $winnerId = $gameState['gameStatus']['winner'];
+                        $gameManager->finishGame($gameId, $winnerId);
+                        
+                        // Update player stats
+                        $userObj = new User($pdo);
+                        
+                        // Update resigning player as loss
+                        $userObj->updateStats($_SESSION['user_id'], false);
+                        
+                        // Update winner if there is one
+                        if ($winnerId) {
+                            $userObj->updateStats($winnerId, true);
+                        }
+                        
+                        // Update other active players (if 3-player game)
+                        $playerUsers = $game->getPlayerUsers();
+                        foreach ($playerUsers as $userId) {
+                            if ($userId && $userId != $_SESSION['user_id'] && $userId != $winnerId) {
+                                // For 3-player games, other players get neither win nor loss if game ends by resignation
+                                // Or you could implement different logic here
+                            }
+                        }
+                    }
+                    
+                    echo json_encode(['success' => true, 'message' => 'You have resigned from the game']);
+                } else {
+                    echo json_encode(['success' => false, 'error' => $result ?: 'Failed to resign']);
+                }
+                exit;
+                
+            case 'login':
+                $username = trim($_POST['username'] ?? '');
+                $password = $_POST['password'] ?? '';
+                
+                if (empty($username) || empty($password)) {
+                    echo json_encode(['success' => false, 'error' => 'Username and password required']);
+                    exit;
+                }
+                
+                $userId = $user->login($username, $password);
+                if ($userId) {
+                    $_SESSION['user_id'] = $userId;
+                    echo json_encode(['success' => true]);
+                } else {
+                    echo json_encode(['success' => false, 'error' => 'Invalid credentials']);
+                }
+                exit;
+                
+            case 'register':
+                $username = trim($_POST['username'] ?? '');
+                $password = $_POST['password'] ?? '';
+                $email = trim($_POST['email'] ?? '');
+                
+                if (empty($username) || empty($password)) {
+                    echo json_encode(['success' => false, 'error' => 'Username and password required']);
+                    exit;
+                }
+                
+                if (strlen($username) < 3) {
+                    echo json_encode(['success' => false, 'error' => 'Username must be at least 3 characters']);
+                    exit;
+                }
+                
+                if (strlen($password) < 6) {
+                    echo json_encode(['success' => false, 'error' => 'Password must be at least 6 characters']);
+                    exit;
+                }
+                
+                $userId = $user->register($username, $password, $email);
+                if ($userId) {
+                    $_SESSION['user_id'] = $userId;
+                    echo json_encode(['success' => true]);
+                } else {
+                    echo json_encode(['success' => false, 'error' => 'Registration failed - username may be taken']);
+                }
+                exit;
+                
+            case 'logout':
+                session_destroy();
+                echo json_encode(['success' => true]);
+                exit;
+                
+            case 'getValidMoves':
+                if (!isset($_SESSION['user_id'])) {
+                    echo json_encode(['success' => false, 'error' => 'Not logged in']);
+                    exit;
+                }
+                
+                $gameId = trim($_POST['game_id'] ?? '');
+                $fromQ = (int)($_POST['fromQ'] ?? 0);
+                $fromR = (int)($_POST['fromR'] ?? 0);
+                
+                if (empty($gameId)) {
+                    echo json_encode(['success' => false, 'error' => 'Game ID required']);
+                    exit;
+                }
+                
+                $gameInfo = $gameManager->getGame($gameId);
+                if (!$gameInfo) {
+                    echo json_encode(['success' => false, 'error' => 'Game not found']);
+                    exit;
+                }
+                
+                $game = $gameInfo['game'];
+                
+                // Check if user can move
+                if (!$game->canUserMove($_SESSION['user_id'])) {
+                    echo json_encode(['success' => false, 'error' => 'Not your turn']);
+                    exit;
+                }
+                
+                // Get valid moves
+                $validMoves = $game->getValidMoves($fromQ, $fromR);
+                echo json_encode(['success' => true, 'validMoves' => $validMoves]);
+                exit;
+                
+            case 'move':
+                if (!isset($_SESSION['user_id'])) {
+                    echo json_encode(['success' => false, 'error' => 'Not logged in']);
+                    exit;
+                }
+                
+                $gameId = trim($_POST['game_id'] ?? '');
+                $fromQ = (int)($_POST['fromQ'] ?? 0);
+                $fromR = (int)($_POST['fromR'] ?? 0);
+                $toQ = (int)($_POST['toQ'] ?? 0);
+                $toR = (int)($_POST['toR'] ?? 0);
+                
+                if (empty($gameId)) {
+                    echo json_encode(['success' => false, 'error' => 'Game ID required']);
+                    exit;
+                }
+                
+                $gameInfo = $gameManager->getGame($gameId);
+                if (!$gameInfo) {
+                    echo json_encode(['success' => false, 'error' => 'Game not found']);
+                    exit;
+                }
+                
+                $game = $gameInfo['game'];
+                
+                // Check if user can move
+                if (!$game->canUserMove($_SESSION['user_id'])) {
+                    echo json_encode(['success' => false, 'error' => 'Not your turn']);
+                    exit;
+                }
+                
+                try {
+                    // Use the correct method name: movePiece instead of makeMove
+                    $result = $game->movePiece($fromQ, $fromR, $toQ, $toR);
+                    
+                    if ($result === true) {
+                        // Save the game state
+                        if (method_exists($gameManager, 'updateGameState')) {
+                            $gameManager->updateGameState($gameId, $game);
+                        } elseif (method_exists($gameManager, 'saveGame')) {
+                            $gameManager->saveGame($gameId, $game);
+                        }
+                        
+                        // Get updated game state
+                        $gameState = $game->getGameState();
+                        
+                        // Check for kings in check - use the correct method name
+                        $kingsInCheck = $gameState['kingsInCheck'] ?? [];
+                        
+                        echo json_encode([
+                            'success' => true, 
+                            'gameState' => $gameState,
+                            'kingsInCheck' => $kingsInCheck
+                        ]);
+                    } else {
+                        // Move failed, provide specific error type if available
+                        $errorType = null;
+                        $errorMessage = is_string($result) ? $result : 'Invalid move';
+                        
+                        if (strpos($errorMessage, 'expose') !== false || strpos($errorMessage, 'check') !== false) {
+                            $errorType = 'exposes-king';
+                        } elseif (strpos($errorMessage, 'piece') !== false) {
+                            $errorType = 'wrong-player';
+                        } elseif (strpos($errorMessage, 'no piece') !== false) {
+                            $errorType = 'no-piece';
+                        }
+                        
+                        echo json_encode([
+                            'success' => false, 
+                            'error' => $errorMessage,
+                            'errorType' => $errorType
+                        ]);
+                    }
+                } catch (Exception $e) {
+                    echo json_encode(['success' => false, 'error' => 'Move failed: ' . $e->getMessage()]);
+                }
+                exit;
+                
+
+case 'ai_move':
+                if (!isset($_SESSION['user_id'])) {
+                    echo json_encode(['success' => false, 'error' => 'Not logged in']);
+                    exit;
+                }
+                
+                $gameId = trim($_POST['game_id'] ?? '');
+                if (empty($gameId)) {
+                    echo json_encode(['success' => false, 'error' => 'Game ID required']);
+                    exit;
+                }
+                
+                try {
+                    $gameInfo = $gameManager->getGame($gameId);
+                    if (!$gameInfo) {
+                        echo json_encode(['success' => false, 'error' => 'Game not found']);
+                        exit;
+                    }
+                    
+                    $game = $gameInfo['game'];
+                    $gameData = $gameInfo['data'];
+                    $players = $gameInfo['players'];
+                    
+                    // Enhanced AI game detection
+                    $gameMode = $gameData['game_mode'] ?? '';
+                    if ($gameMode !== 'ai') {
+                        echo json_encode(['success' => false, 'error' => 'Not an AI game']);
+                        exit;
+                    }
+                    
+                    // Find AI player slot
+                    $aiPlayerSlot = null;
+                    foreach ($players as $player) {
+                        if ($player['user_id'] != $_SESSION['user_id']) {
+                            $aiPlayerSlot = $player['player_slot'];
+                            break;
+                        }
+                    }
+                    
+                    if ($aiPlayerSlot === null) {
+                        // Fallback
+                        $userPlayerSlot = null;
+                        foreach ($players as $player) {
+                            if ($player['user_id'] == $_SESSION['user_id']) {
+                                $userPlayerSlot = $player['player_slot'];
+                                break;
+                            }
+                        }
+                        $aiPlayerSlot = ($userPlayerSlot == 0) ? 1 : 0;
+                    }
+                    
+                    $currentPlayerSlot = $game->getCurrentPlayerSlot();
+                    
+                    // Check if it's AI's turn
+                    if ($currentPlayerSlot !== $aiPlayerSlot) {
+                        echo json_encode(['success' => false, 'error' => 'Not AI turn']);
+                        exit;
+                    }
+                    
+                    // Get AI difficulty
+                    $aiDifficulty = $gameData['ai_difficulty'] ?? 'medium';
+                    
+                    // Create AI and make move
+                    $ai = new HexChessAI($game, $aiDifficulty, $aiPlayerSlot);
+                    $result = $ai->makeMove();
+                    
+                    if ($result === true) {
+                        // Save the updated game state
+                        $gameManager->updateGameState($gameId, $game);
+                        
+                        // Get updated game state
+                        $gameState = $game->getGameState();
+                        
+                        echo json_encode([
+                            'success' => true,
+                            'gameState' => $gameState,
+                            'kingsInCheck' => $gameState['kingsInCheck'] ?? [],
+                            'aiName' => method_exists($ai, 'getAIName') ? $ai->getAIName() : 'AI',
+                            'newCurrentPlayer' => $game->getCurrentPlayerSlot()
+                        ]);
+                    } else {
+                        echo json_encode(['success' => false, 'error' => 'AI move failed', 'result' => $result]);
+                    }
+                    
+                } catch (Exception $e) {
+                    echo json_encode(['success' => false, 'error' => 'AI error: ' . $e->getMessage()]);
+                }
+                exit;
+
+            default:
+                echo json_encode(['success' => false, 'error' => 'Unknown action']);
+                exit;
+        }
+    } catch (Exception $e) {
+        error_log("AJAX Error: " . $e->getMessage());
+        echo json_encode(['success' => false, 'error' => 'Server error occurred']);
+        exit;
+    }
+
+
+}
+
+// Check if user is logged in
+$isLoggedIn = isset($_SESSION['user_id']);
+$currentUser = $isLoggedIn ? $user->getUserById($_SESSION['user_id']) : null;
+
+// Handle different pages
+$page = $_GET['page'] ?? 'lobby';
+
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HexChess Online</title>
+    <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+    <div class="header">
+        <h1>🏰 HexChess Online</h1>
+        <div class="user-info">
+            <?php if ($isLoggedIn): ?>
+                <span>Welcome, <?php echo htmlspecialchars($currentUser['username']); ?>!</span>
+                <span>(<?php echo $currentUser['wins']; ?>W-<?php echo $currentUser['losses']; ?>L)</span>
+                <button class="btn btn-secondary" onclick="logout()">Logout</button>
+            <?php else: ?>
+                <button class="btn btn-secondary" onclick="window.location.href='?page=demo'">📚 Demo</button>
+                <button class="btn" onclick="showAuth('login')">Login</button>
+                <button class="btn btn-secondary" onclick="showAuth('register')">Register</button>
+            <?php endif; ?>
+        </div>
+    </div>
+
+    <?php if (!$isLoggedIn && $page !== 'demo'): ?>
+        <!-- Authentication forms -->
+        <div class="auth-container" id="loginForm" style="display: none;">
+            <h2>Login</h2>
+            <form onsubmit="login(event)">
+                <div class="form-group">
+                    <label>Username:</label>
+                    <input type="text" name="username" required>
+                </div>
+                <div class="form-group">
+                    <label>Password:</label>
+                    <input type="password" name="password" required>
+                </div>
+                <button type="submit" class="btn" style="width: 100%;">Login</button>
+            </form>
+            <p style="text-align: center; margin-top: 1rem;">
+                <a href="#" onclick="showAuth('register')" style="color: #fff;">Need an account? Register</a>
+            </p>
+            <p style="text-align: center; margin-top: 0.5rem;">
+                <a href="?page=demo" style="color: #2ecc71;">📚 Try the Piece Movement Demo</a>
+            </p>
+        </div>
+        
+        <div class="auth-container" id="registerForm" style="display: none;">
+            <h2>Register</h2>
+            <form onsubmit="register(event)">
+                <div class="form-group">
+                    <label>Username (3+ characters):</label>
+                    <input type="text" name="username" minlength="3" required>
+                </div>
+                <div class="form-group">
+                    <label>Password (6+ characters):</label>
+                    <input type="password" name="password" minlength="6" required>
+                </div>
+                <div class="form-group">
+                    <label>Email (optional):</label>
+                    <input type="email" name="email">
+                </div>
+                <button type="submit" class="btn" style="width: 100%;">Register</button>
+            </form>
+            <p style="text-align: center; margin-top: 1rem;">
+                <a href="#" onclick="showAuth('login')" style="color: #fff;">Have an account? Login</a>
+            </p>
+            <p style="text-align: center; margin-top: 0.5rem;">
+                <a href="?page=demo" style="color: #2ecc71;">📚 Try the Piece Movement Demo</a>
+            </p>
+        </div>
+
+    <?php elseif ($page === 'lobby'): ?>
+        <!-- Lobby -->
+        <div class="container">
+            <div class="lobby">
+                <div class="panel">
+                    <h2>🎮 Create New Game</h2>
+                    <form onsubmit="createGame(event)">
+                        <div class="form-group">
+                            <label>Game Mode:</label>
+                            <select name="game_mode" id="game_mode" onchange="updateGameModeOptions()">
+                                <option value="multiplayer">👥 Multiplayer</option>
+                                <option value="ai">🤖 vs AI</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group" id="players-group">
+                            <label>Players:</label>
+                            <select name="player_count" id="player_count" onchange="updateDefaultGameName()">
+                                <option value="2">2 Players</option>
+                                <option value="3">3 Players</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group" id="ai-difficulty-group" style="display: none;">
+                            <label>AI Difficulty:</label>
+                            <select name="ai_difficulty" id="ai_difficulty" onchange="updateDefaultGameName()">
+                                <option value="easy">🟢 Easy (Rookie)</option>
+                                <option value="medium" selected>🟡 Medium (Knight)</option>
+                                <option value="hard">🔴 Hard (Master)</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Board Size:</label>
+                            <select name="board_size" id="board_size" onchange="updateDefaultGameName()">
+                                <option value="5">Small Board</option>
+                                <option value="6">Medium Board</option>
+                                <option value="7" selected>Large Board</option>
+                                <option value="8">Jumbo Board</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Game Name:</label>
+                            <input type="text" name="game_name" id="game_name" 
+                                   placeholder="Enter custom name or use default"
+                                   value="2-Player Large Game"
+                                   maxlength="100">
+                            <div class="form-helper">
+                                <small>Customize your room name</small>
+                                <button type="button" class="btn-reset" onclick="resetToDefaultName()">Reset to Default</button>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn" style="width: 100%;">Create Game</button>
+                    </form>
+                    
+                    <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(255,255,255,0.2);">
+                        <button class="btn btn-secondary" onclick="window.location.href='?page=demo'" style="width: 100%;">
+                            📚 Learn Piece Movements
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="panel">
+                    <h2>🎯 Your Active Games</h2>
+                    <div class="game-list" id="my-games">
+                        <p>Loading your games...</p>
+                    </div>
+                    <button class="btn btn-secondary" onclick="loadMyGames()" style="width: 100%; margin-top: 1rem;">Refresh My Games</button>
+                </div>
+            </div>
+            
+            <div class="lobby" style="margin-top: 2rem;">
+                <div class="panel" style="grid-column: 1 / -1;">
+                    <h2>🌐 Available Games</h2>
+                    <div class="game-list" id="available-games">
+                        <p>Loading games...</p>
+                    </div>
+                    <button class="btn btn-secondary" onclick="loadAvailableGames()" style="width: 100%; margin-top: 1rem;">Refresh</button>
+                </div>
+            </div>
+        </div>
+
+    <?php elseif ($page === 'demo'): ?>
+        <!-- Piece Movement Demo -->
+        <div class="game-area">
+            <div class="game-sidebar">
+                <div class="game-status">
+                    <h3>📚 Piece Movement Demo</h3>
+                    <p>Select a piece type to see how it moves!</p>
+                </div>
+                
+                <div class="player-list">
+                    <h3 style="margin-bottom: 20px;">Choose Piece Type</h3>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 15px;">
+                        <button class="piece-nav-btn active" onclick="showPiece('king')" id="nav-king">
+                            ♚ King
+                        </button>
+                        <button class="piece-nav-btn" onclick="showPiece('queen')" id="nav-queen">
+                            ♛ Queen
+                        </button>
+                        <button class="piece-nav-btn" onclick="showPiece('rook')" id="nav-rook">
+                            ♜ Rook
+                        </button>
+                        <button class="piece-nav-btn" onclick="showPiece('bishop')" id="nav-bishop">
+                            ♝ Bishop
+                        </button>
+                        <button class="piece-nav-btn" onclick="showPiece('knight')" id="nav-knight">
+                            ♞ Knight
+                        </button>
+                        <button class="piece-nav-btn" onclick="showPiece('pawn')" id="nav-pawn">
+                            ♟ Pawn
+                        </button>
+                    </div>
+                    
+                    <div id="piece-description">
+                        <div id="desc-king" class="piece-desc active">
+                            <h4>♚ King Movement</h4>
+                            <p>Moves one space in any direction - all 6 orthogonal directions (like rook) plus all 6 diagonal directions (like bishop) = 12 total moves</p>
+                        </div>
+                        <div id="desc-queen" class="piece-desc">
+                            <h4>♛ Queen Movement</h4>
+                            <p>Moves any distance in straight lines or diagonals (combines rook and bishop movement)</p>
+                        </div>
+                        <div id="desc-rook" class="piece-desc">
+                            <h4>♜ Rook Movement</h4>
+                            <p>Moves any distance along the three main hex axes (orthogonal directions)</p>
+                        </div>
+                        <div id="desc-bishop" class="piece-desc">
+                            <h4>♝ Bishop Movement</h4>
+                            <p>Moves any distance along the three diagonal hex directions</p>
+                        </div>
+                        <div id="desc-knight" class="piece-desc">
+                            <h4>♞ Knight Movement</h4>
+                            <p>Jumps in an L-shape: 2 spaces in one direction, then 1 space perpendicular</p>
+                        </div>
+                        <div id="desc-pawn" class="piece-desc">
+                            <h4>♟ Pawn Movement</h4>
+                            <p>Moves forward one space (toward opponent). Captures diagonally forward (red squares show capture zones)</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <?php if ($isLoggedIn): ?>
+                    <div style="display: flex; gap: 10px; flex-direction: column;">
+                        <button class="btn btn-secondary" onclick="window.location.href='?page=lobby'">
+                            Back to Lobby
+                        </button>
+                    </div>
+                <?php else: ?>
+                    <button class="btn btn-secondary" onclick="window.location.href='?'">← Back to Login</button>
+                <?php endif; ?>
+            </div>
+            
+            <div class="game-main">
+                <?php 
+                // Create a demo game for learning
+                $demoGame = createDemoBoard();
+                echo renderDemoBoard($demoGame, 'king');
+                ?>
+            </div>
+        </div>
+
+    <?php elseif ($page === 'game'): ?>
+        <!-- Game page -->
+        <?php
+        $gameId = $_GET['id'] ?? '';
+        $gameInfo = $gameManager->getGame($gameId);
+        
+        if (!$gameInfo):
+        ?>
+            <div class="container">
+                <div class="panel">
+                    <h2>Game Not Found</h2>
+                    <p>The requested game could not be found.</p>
+                    <button class="btn" onclick="window.location.href='?page=lobby'">Back to Lobby</button>
+                </div>
+            </div>
+        <?php else:
+            $game = $gameInfo['game'];
+            $players = $gameInfo['players'];
+            $gameData = $gameInfo['data'];
+            $gameState = $game->getGameState();
+            
+            $userPlayerSlot = null;
+            foreach ($players as $player) {
+                if ($player['user_id'] == $_SESSION['user_id']) {
+                    $userPlayerSlot = $player['player_slot'];
+                    break;
+                }
+            }
+            
+            $canMove = $userPlayerSlot !== null && $game->canUserMove($_SESSION['user_id']);
+            $gameActive = $gameData['status'] === 'active';
+            $userInGame = $userPlayerSlot !== null;
+        ?>
+            <div class="game-area">
+                <div class="game-sidebar">
+                    <div class="game-status">
+                        <h3 id="gameStatus">
+                            <?php 
+                            if ($gameState['gameStatus']['gameOver']) {
+                                echo "Game Over";
+                            } elseif ($gameData['status'] === 'waiting') {
+                                echo "Waiting for Players";
+                            } else {
+                                echo "Game Active";
+                            }
+                            ?>
+                        </h3>
+                        <p id="gameStatusText">
+                            <?php 
+                            if ($gameState['gameStatus']['gameOver']) {
+                                if (isset($gameState['gameStatus']['winner'])) {
+                                    $winnerName = "Unknown";
+                                    foreach ($players as $player) {
+                                        if ($player['user_id'] == $gameState['gameStatus']['winner']) {
+                                            $winnerName = $player['username'];
+                                            break;
+                                        }
+                                    }
+                                    echo "Winner: " . htmlspecialchars($winnerName);
+} else {
+    // Check if it's stalemate vs draw
+    $gameOverReason = $gameState['gameStatus']['reason'] ?? 'draw';
+    if ($gameOverReason === 'stalemate') {
+        echo '<div style="font-size: 20px; font-weight: bold; color: #f39c12;">';
+        echo '🤝 STALEMATE - No legal moves available';
+        echo '</div>';
+    } else {
+        echo '<div style="font-size: 20px; font-weight: bold; color: #f39c12;">';
+        echo '🤝 DRAW - Game ended in a tie';
+        echo '</div>';
+    }
+}                            } elseif ($gameData['status'] === 'waiting') {
+                                echo "Need " . ($game->getPlayerCount() - count($players)) . " more player(s)";
+                            } elseif ($canMove) {
+                                echo "Your turn!";
+                            } else {
+                                echo "Waiting for " . ucfirst($game->getCurrentPlayer()) . " player";
+                            }
+                            ?>
+                        </p>
+                        
+                        <?php if ($gameState['isInCheck']): ?>
+                            <div class="check-warning">
+                                <strong>⚠️ Your King is in Check!</strong>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                    
+                    <div class="player-list">
+                        <h3>Players</h3>
+                        <div id="playerList">
+
+<?php foreach ($players as $player): ?>
+    <div class="player-item <?php echo $player['player_slot'] == $game->getCurrentPlayerSlot() ? 'current' : ''; ?>">
+        <strong><?php echo ucfirst($game->getPlayers()[$player['player_slot']]); ?></strong><br>
+        <?php if ($player['user_id'] == $_SESSION['user_id']): ?>
+            <?php echo htmlspecialchars($player['username']); ?>
+            <small>(You)</small>
+        <?php elseif ($gameData['game_mode'] === 'ai'): ?>
+            <?php 
+            $aiDifficulty = $gameData['ai_difficulty'] ?? 'medium';
+            $difficultyColors = [
+                'easy' => '#2ecc71',    // Green
+                'medium' => '#f39c12',  // Orange  
+                'hard' => '#e74c3c'     // Red
+            ];
+            $difficultyNames = [
+                'easy' => '🟢 Easy AI',
+                'medium' => '🟡 Medium AI', 
+                'hard' => '🔴 Hard AI'
+            ];
+            ?>
+            <span style="color: <?php echo $difficultyColors[$aiDifficulty]; ?>; font-weight: bold;">
+                <?php echo $difficultyNames[$aiDifficulty]; ?>
+            </span>
+        <?php else: ?>
+            <?php echo htmlspecialchars($player['username']); ?>
+        <?php endif; ?>
+    </div>
+<?php endforeach; ?>
+
+                        </div>
+                    </div>
+                    
+                    <div class="game-controls">
+                        <button class="btn btn-secondary" onclick="window.open('?page=demo', '_blank')" style="width: 100%; margin-bottom: 10px;">📚 Piece Movements</button>
+                        
+                        <?php if ($gameActive && $userInGame && !$gameState['gameStatus']['gameOver']): ?>
+                            <button class="btn btn-danger" onclick="resignGame()" style="width: 100%; margin-bottom: 10px;">
+                                🏳️ Resign Game
+                            </button>
+                        <?php endif; ?>
+                        
+                        <button class="btn btn-secondary" onclick="window.location.href='?page=lobby'" style="width: 100%;">Back to Lobby</button>
+                    </div>
+                </div>
+                
+                <div class="game-main">
+                    <?php echo renderBoard($game, $gameId, $canMove); ?>
+                </div>
+                
+ <script>
+                    // Basic game variables
+                    var gameId = '<?php echo htmlspecialchars($gameId); ?>';
+                    var userCanMove = <?php echo $canMove ? 'true' : 'false'; ?>;
+                    
+                    // Enhanced game state variables
+                    <?php
+                    // Get enhanced game state
+                    $gameMode = $gameData['game_mode'] ?? 'multiplayer';
+                    $isAIGame = ($gameMode === 'ai');
+                    $currentPlayerSlot = method_exists($game, 'getCurrentPlayerSlot') ? $game->getCurrentPlayerSlot() : null;
+                    
+                    // Find AI player slot
+                    $aiPlayerSlot = null;
+                    if ($isAIGame) {
+                        foreach ($players as $player) {
+                            if ($player['user_id'] != $_SESSION['user_id']) {
+                                $aiPlayerSlot = $player['player_slot'];
+                                break;
+                            }
+                        }
+                        if ($aiPlayerSlot === null) {
+                            $aiPlayerSlot = ($userPlayerSlot == 0) ? 1 : 0;
+                        }
+                    }
+                    ?>
+                    
+                    var gameMode = '<?php echo htmlspecialchars($gameMode); ?>';
+                    var isAIGame = <?php echo $isAIGame ? 'true' : 'false'; ?>;
+                    var currentPlayerSlot = <?php echo json_encode($currentPlayerSlot); ?>;
+                    var userPlayerSlot = <?php echo json_encode($userPlayerSlot); ?>;
+                    var aiPlayerSlot = <?php echo json_encode($aiPlayerSlot); ?>;
+                    
+                    // Highlight kings in check on page load
+                    <?php if (!empty($gameState['kingsInCheck'])): ?>
+                        document.addEventListener('DOMContentLoaded', function() {
+                            <?php foreach ($gameState['kingsInCheck'] as $king): ?>
+                                var kingCell = document.querySelector('[data-q="<?php echo $king['q']; ?>"][data-r="<?php echo $king['r']; ?>"]');
+                                if (kingCell) {
+                                    kingCell.classList.add('king-in-check');
+                                }
+                            <?php endforeach; ?>
+                        });
+                    <?php endif; ?>
+                </script>
+                
+                            </div>
+            
+        <?php endif; ?>
+    <?php endif; ?>
+
+    <!-- Include JavaScript -->
+    <script src="assets/game.js?v=37"></script>
+    <script>
+        // Initialize page-specific functionality
+        <?php if (!$isLoggedIn && $page !== 'demo'): ?>
+            showAuth('login');
+        <?php elseif ($page === 'lobby'): ?>
+            loadAvailableGames();
+            // Initialize game name
+            if (document.getElementById('game_name')) {
+                updateDefaultGameName();
+            }
+        <?php endif; ?>
+    </script>
+</body>
+</html>
