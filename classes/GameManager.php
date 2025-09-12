@@ -1,421 +1,237 @@
 <?php
+// classes/GameManager.php
 
-if (!class_exists('PoohGame')) {
-    class PoohGame {
-        public function __wakeup() { /* do nothing */ }
-    }
-}
+require_once __DIR__ . '/BaseChess.php';
+require_once __DIR__ . '/HexChess.php';
 
 class GameManager {
     private $pdo;
-    
+
     public function __construct($pdo) {
         $this->pdo = $pdo;
     }
-    
+
+    /** Safe to keep: no-op once columns exist */
+    private function ensureTurnTimerColumns(): void {
+        try {
+            $stmt = $this->pdo->query("SHOW COLUMNS FROM games LIKE 'turn_timer'");
+            if ($stmt && $stmt->rowCount() === 0) {
+                $this->pdo->exec("
+                    ALTER TABLE games
+                    ADD COLUMN turn_timer INT DEFAULT 30 AFTER game_mode,
+                    ADD COLUMN skip_action VARCHAR(20) DEFAULT 'skip_turn' AFTER turn_timer
+                ");
+                error_log("[GameManager] Added turn_timer & skip_action columns");
+            }
+        } catch (Throwable $e) {
+            error_log("[GameManager] Schema check failed: " . $e->getMessage());
+        }
+    }
+
+    /** Create or get the AI user id */
     private function getOrCreateAIUser() {
-        // Check if AI user already exists
         $stmt = $this->pdo->prepare("SELECT id FROM users WHERE username = 'AI_PLAYER'");
         $stmt->execute();
-        $aiUser = $stmt->fetch();
-        
-        if ($aiUser) {
-            return $aiUser['id']; // Return existing AI user ID
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row && !empty($row['id'])) {
+            return (int)$row['id'];
         }
-        
-        // Create AI user if it doesn't exist
         $stmt = $this->pdo->prepare("
-            INSERT INTO users (username, password_hash, email, wins, losses, created_at) 
+            INSERT INTO users (username, password_hash, email, wins, losses, created_at)
             VALUES ('AI_PLAYER', 'no_password', 'ai@system.local', 0, 0, NOW())
         ");
         $stmt->execute();
-        
-        return $this->pdo->lastInsertId(); // Return new AI user ID
+        return (int)$this->pdo->lastInsertId();
     }
 
-    public function createGame($creatorId, $gameName, $playerCount, $boardSize = 7, $gameMode = 'multiplayer', $aiDifficulty = 'medium', $gameType = 'online', $turnTimer = 30, $skipAction = 'skip_turn', $startingPositions = null) {
-        try {
-            // Set default starting positions if not provided
-            if ($startingPositions === null) {
-                switch ($playerCount) {
-                    case 2: $startingPositions = [0, 3]; break;
-                    case 3: $startingPositions = [0, 2, 4]; break;
-                    case 4: $startingPositions = [0, 1, 3, 4]; break;
-                    case 5: $startingPositions = [0, 1, 2, 3, 4]; break;
-                    case 6: $startingPositions = [0, 1, 2, 3, 4, 5]; break;
-                    default: $startingPositions = [0, 3]; break;
-                }
-            }
-            
-            // Generate unique game ID
-            $gameId = uniqid('game_', true);
-            
-            // Create the HexChess game object
-            $game = new HexChess($gameId, $playerCount, $boardSize);
-            $gameState = serialize($game);
-            
-            // Check what columns exist in your database and build appropriate INSERT
-            $stmt = $this->pdo->query("SHOW COLUMNS FROM games");
-            $existingColumns = $stmt->fetchAll(PDO::FETCH_COLUMN);
-            
-            // Base columns that should always exist
-            $columns = ['game_id', 'creator_id', 'game_name', 'player_count', 'board_size', 'game_state'];
-            $values = [$gameId, $creatorId, $gameName, $playerCount, $boardSize, $gameState];
-            
-            // Add optional columns if they exist in your database
-            if (in_array('game_mode', $existingColumns)) {
-                $columns[] = 'game_mode';
-                $values[] = $gameMode;
-            }
-            
-            if (in_array('ai_difficulty', $existingColumns)) {
-                $columns[] = 'ai_difficulty';
-                $values[] = $aiDifficulty;
-            }
-            
-            if (in_array('game_type', $existingColumns)) {
-                $columns[] = 'game_type';
-                $values[] = $gameType;
-            }
-            
-            if (in_array('turn_timer', $existingColumns)) {
-                $columns[] = 'turn_timer';
-                $values[] = $turnTimer;
-            }
-            
-            if (in_array('skip_action', $existingColumns)) {
-                $columns[] = 'skip_action';
-                $values[] = $skipAction;
-            }
-            
-            if (in_array('starting_positions', $existingColumns)) {
-                $columns[] = 'starting_positions';
-                $values[] = json_encode($startingPositions);
-            }
-            
-            if (in_array('status', $existingColumns)) {
-                $columns[] = 'status';
-                $values[] = 'waiting';
-            }
-            
-            if (in_array('created_at', $existingColumns)) {
-                $columns[] = 'created_at';
-                $values[] = date('Y-m-d H:i:s');
-            }
-            
-            // Build and execute INSERT query
-            $placeholders = str_repeat('?,', count($columns) - 1) . '?';
-            $sql = "INSERT INTO games (" . implode(', ', $columns) . ") VALUES ($placeholders)";
-            
-            $stmt = $this->pdo->prepare($sql);
-            $result = $stmt->execute($values);
-            
-            if (!$result) {
-                error_log("Database INSERT failed for game creation");
-                return false;
-            }
-            
-            // Add creator as first player
-            $stmt = $this->pdo->prepare("INSERT INTO game_players (game_id, user_id, player_slot) VALUES (?, ?, ?)");
-            $stmt->execute([$gameId, $creatorId, 0]);
-
-            // For AI games, add AI player and start immediately
-            if ($gameMode === 'ai') {
-                // Create or get AI user
-                $aiUserId = $this->getOrCreateAIUser();
-                
-                // Add AI as second player
-                $stmt = $this->pdo->prepare("INSERT INTO game_players (game_id, user_id, player_slot) VALUES (?, ?, ?)");
-                $stmt->execute([$gameId, $aiUserId, 1]);
-                
-                // Start the game immediately
-                $this->startGame($gameId);
-            }
-
-            // For hotseat games, add the creator to all player slots and start immediately
-            if ($gameMode === 'hotseat') {
-                // Add creator to remaining player slots (they'll control all players)
-                for ($slot = 1; $slot < $playerCount; $slot++) {
-                    $stmt = $this->pdo->prepare("INSERT INTO game_players (game_id, user_id, player_slot) VALUES (?, ?, ?)");
-                    $stmt->execute([$gameId, $creatorId, $slot]);
-                }
-                
-                // Start the game immediately
-                $this->startGame($gameId);
-            }
-
-            return $gameId;
-            
-        } catch (Exception $e) {
-            error_log("Game creation error: " . $e->getMessage());
-            return false;
-        }
+    /** Generate a unique varchar game id */
+    private function generateGameId(): string {
+        return 'game_' . uniqid('', true) . '_' . time();
     }
 
-    private function getActiveGameCount() {
-        $stmt = $this->pdo->query("SELECT COUNT(*) FROM games WHERE status IN ('waiting', 'active')");
-        return $stmt->fetchColumn();
-    }
-    
-    public function joinGame($gameId, $userId) {
-        $stmt = $this->pdo->prepare("SELECT player_count FROM games WHERE game_id = ? AND status = 'waiting'");
-        $stmt->execute([$gameId]);
-        $game = $stmt->fetch();
-        
-        if (!$game) return false;
-        
-        $stmt = $this->pdo->prepare("SELECT COUNT(*) as count FROM game_players WHERE game_id = ?");
-        $stmt->execute([$gameId]);
-        $playerCount = $stmt->fetch()['count'];
-        
-        if ($playerCount >= $game['player_count']) return false;
-        
-        $stmt = $this->pdo->prepare("INSERT INTO game_players (game_id, user_id, player_slot) VALUES (?, ?, ?)");
-        $stmt->execute([$gameId, $userId, $playerCount]);
-        
-        if ($playerCount + 1 >= $game['player_count']) {
-            $this->startGame($gameId);
-        }
-        
-        return true;
-    }
-    
-    private function startGame($gameId) {
-        $stmt = $this->pdo->prepare("UPDATE games SET status = 'active', started_at = NOW() WHERE game_id = ?");
-        $stmt->execute([$gameId]);
-        
+    /**
+     * Create a new game
+     * Called from index.php with fog/shogi flags and ai vs modes.
+     */
+    public function createGame(
+        $creatorId,
+        $roomName,
+        $playerCount,
+        $boardSize,
+        $gameMode = 'multiplayer',
+        $aiDifficulty = 'basic',
+        $gameType = 'online',
+        $turnTimer = 30,
+        $skipAction = 'skip_turn',
+        $startingPositions = [],
+        $fogOfWar = 0,
+        $shogiDrops = 0
+    ) {
+        $this->ensureTurnTimerColumns();
+
+        $gameId = $this->generateGameId();
+
+        // Build game object (id set so it persists in state)
+        $game = new HexChess($gameId, (int)$playerCount, (int)$boardSize);
+        if ($fogOfWar)   { $game->enableFogOfWar(); }
+        if ($shogiDrops) { $game->enableShogiDrops(); }
+
+        $serialized = json_encode($game->getSerializableData());
+
+        // Insert base game row as waiting
         $stmt = $this->pdo->prepare("
-            SELECT g.game_name, g.player_count, u.username as creator
-            FROM games g 
-            JOIN users u ON g.creator_id = u.id 
-            WHERE g.game_id = ?
+            INSERT INTO games
+              (game_id, creator_id, game_name, status, player_count, board_size, game_mode, ai_difficulty,
+               game_type, turn_timer, skip_action, fog_of_war, shogi_drops, game_state, created_at)
+            VALUES
+              (?,       ?,          ?,         'waiting', ?,           ?,         ?,          ?,
+               ?,        ?,          ?,           ?,           ?,          ?,          NOW())
         ");
-        $stmt->execute([$gameId]);
-        $gameInfo = $stmt->fetch();
-        
-        // Log activity if function exists
-        if (function_exists('logActivity')) {
-            logActivity('game_started', "Game started: {$gameInfo['game_name']} (ID: $gameId)");
+        $stmt->execute([
+            $gameId,
+            $creatorId,
+            $roomName,
+            (int)$playerCount,
+            (int)$boardSize,
+            $gameMode,
+            $aiDifficulty,
+            $gameType,
+            (int)$turnTimer,
+            $skipAction,
+            (int)$fogOfWar,
+            (int)$shogiDrops,
+            $serialized
+        ]);
+
+        // Creator is always slot 0
+        $stmt = $this->pdo->prepare("INSERT INTO game_players (game_id, user_id, player_slot) VALUES (?, ?, 0)");
+        $stmt->execute([$gameId, $creatorId]);
+
+        // If AI game, auto-add AI in slot 1 and start immediately
+        if ($gameMode === 'ai') {
+            $aiUserId = $this->getOrCreateAIUser();
+
+            // Avoid double insert if schema already had it (defensive)
+            $stmt = $this->pdo->prepare("SELECT 1 FROM game_players WHERE game_id = ? AND user_id = ?");
+            $stmt->execute([$gameId, $aiUserId]);
+            if (!$stmt->fetchColumn()) {
+                $stmt = $this->pdo->prepare("INSERT INTO game_players (game_id, user_id, player_slot) VALUES (?, ?, 1)");
+                $stmt->execute([$gameId, $aiUserId]);
+            }
+
+            // Activate the game now that both seats are filled
+            $stmt = $this->pdo->prepare("UPDATE games SET status = 'active', started_at = NOW() WHERE game_id = ?");
+            $stmt->execute([$gameId]);
+        } else {
+            // Non-AI: auto-activate if all seats filled at creation (rare, e.g., hotseat pre-fill)
+            $stmt = $this->pdo->prepare("SELECT COUNT(*) FROM game_players WHERE game_id = ?");
+            $stmt->execute([$gameId]);
+            $current = (int)$stmt->fetchColumn();
+            if ($current >= (int)$playerCount) {
+                $stmt = $this->pdo->prepare("UPDATE games SET status = 'active', started_at = NOW() WHERE game_id = ?");
+                $stmt->execute([$gameId]);
+            }
         }
+
+        return $gameId;
     }
-    
-    public function finishGame($gameId, $winnerId = null, $reason = 'completed') {
-        $stmt = $this->pdo->prepare("
-            UPDATE games SET status = 'finished', finished_at = NOW(), winner_id = ? 
-            WHERE game_id = ?
-        ");
-        $stmt->execute([$winnerId, $gameId]);
-        
-        $stmt = $this->pdo->prepare("
-            SELECT g.game_name, g.player_count, creator.username as creator_name,
-                   winner.username as winner_name
-            FROM games g 
-            JOIN users creator ON g.creator_id = creator.id 
-            LEFT JOIN users winner ON g.winner_id = winner.id
-            WHERE g.game_id = ?
-        ");
-        $stmt->execute([$gameId]);
-        $gameInfo = $stmt->fetch();
-        
-        $winnerText = $gameInfo['winner_name'] ? "Winner: {$gameInfo['winner_name']}" : "No winner";
-        $reasonText = $reason === 'resignation' ? "(by resignation)" : "";
-        
-        // Log activity if function exists
-        if (function_exists('logActivity')) {
-            logActivity('game_finished', "Game finished: {$gameInfo['game_name']} (ID: $gameId) - $winnerText $reasonText", $winnerId);
-        }
-    }
-    
-    private function getGamesCompletedToday() {
-        $stmt = $this->pdo->query("
-            SELECT COUNT(*) FROM games 
-            WHERE status = 'finished' AND DATE(finished_at) = CURDATE()
-        ");
-        return $stmt->fetchColumn();
-    }
-    
-    public function getAvailableGames() {
-        $stmt = $this->pdo->prepare("
-            SELECT g.game_id, g.game_name, g.player_count, g.board_size, g.created_at,
-                   u.username as creator, COUNT(gp.user_id) as current_players
-            FROM games g
-            JOIN users u ON g.creator_id = u.id
-            LEFT JOIN game_players gp ON g.game_id = gp.game_id
-            WHERE g.status = 'waiting'
-            GROUP BY g.game_id
-            ORDER BY g.created_at DESC
-        ");
-        $stmt->execute();
-        return $stmt->fetchAll();
-    }
-    
+
+    /** Load a game (JSON state path) */
     public function getGame($gameId) {
         $stmt = $this->pdo->prepare("SELECT * FROM games WHERE game_id = ?");
         $stmt->execute([$gameId]);
-        $gameData = $stmt->fetch();
-        
+        $gameData = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$gameData) return null;
-        
-        $game = unserialize($gameData['game_state']);
-        
+
+        $decoded = [];
+        if (!empty($gameData['game_state'])) {
+            $decoded = json_decode($gameData['game_state'], true) ?: [];
+        }
+
+        $playerCount = (int)($gameData['player_count'] ?? 2);
+        $boardSize   = (int)($gameData['board_size'] ?? 8);
+
+        $game = new HexChess($gameData['game_id'], $playerCount, $boardSize);
+        if ($decoded) {
+            $game->restoreFromData($decoded);
+        }
+        if (!empty($gameData['fog_of_war']))   { $game->enableFogOfWar(); }
+        if (!empty($gameData['shogi_drops'])) { $game->enableShogiDrops(); }
+
         $stmt = $this->pdo->prepare("
-            SELECT gp.player_slot, gp.user_id, u.username 
-            FROM game_players gp 
-            JOIN users u ON gp.user_id = u.id 
-            WHERE gp.game_id = ? 
+            SELECT gp.player_slot, gp.user_id, u.username
+            FROM game_players gp
+            JOIN users u ON gp.user_id = u.id
+            WHERE gp.game_id = ?
             ORDER BY gp.player_slot
         ");
         $stmt->execute([$gameId]);
-        $players = $stmt->fetchAll();
-        
-        $playerUsers = array_fill(0, $game->getPlayerCount(), null);
-        foreach ($players as $player) {
-            $playerUsers[$player['player_slot']] = $player['user_id'];
+        $players = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        foreach ($players as $p) {
+            $game->setPlayerUser((int)$p['player_slot'], (int)$p['user_id']);
         }
-        
-        $game->setPlayerUsers($playerUsers);
-        
-        return ['game' => $game, 'data' => $gameData, 'players' => $players];
+
+        return [
+            'game'    => $game,
+            'data'    => $gameData,
+            'players' => $players
+        ];
     }
-    
-    public function updateGameState($gameId, $game) {
-        $gameState = serialize($game);
-        $stmt = $this->pdo->prepare("UPDATE games SET game_state = ?, updated_at = NOW() WHERE game_id = ?");
-        
-        try {
-            $stmt->execute([$gameState, $gameId]);
-            error_log("Game state updated for game $gameId");
-            return true;
-        } catch (PDOException $e) {
-            error_log("Failed to update game state for game $gameId: " . $e->getMessage());
-            return false;
+
+    /** Save updated state */
+    public function updateGameState($gameId, BaseChess $game) {
+        $state  = json_encode($game->getSerializableData());
+        $status = $game->isGameOver() ? 'finished' : 'active';
+        $stmt = $this->pdo->prepare("
+            UPDATE games
+               SET game_state = ?, status = ?, updated_at = NOW()
+             WHERE game_id = ?
+        ");
+        $stmt->execute([$state, $status, $gameId]);
+        return true;
+    }
+
+    /** Join a waiting game */
+    public function joinGame($gameId, $userId) {
+        $stmt = $this->pdo->prepare("SELECT 1 FROM game_players WHERE game_id = ? AND user_id = ?");
+        $stmt->execute([$gameId, $userId]);
+        if ($stmt->fetchColumn()) return "Already joined";
+
+        $stmt = $this->pdo->prepare("SELECT player_count, status FROM games WHERE game_id = ?");
+        $stmt->execute([$gameId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$row || $row['status'] !== 'waiting') return false;
+
+        $maxPlayers = (int)$row['player_count'];
+
+        $stmt = $this->pdo->prepare("SELECT COUNT(*) FROM game_players WHERE game_id = ?");
+        $stmt->execute([$gameId]);
+        $current = (int)$stmt->fetchColumn();
+        if ($current >= $maxPlayers) return false;
+
+        $stmt = $this->pdo->prepare("INSERT INTO game_players (game_id, user_id, player_slot) VALUES (?, ?, ?)");
+        $stmt->execute([$gameId, $userId, $current]);
+
+        if ($current + 1 >= $maxPlayers) {
+            $stmt = $this->pdo->prepare("UPDATE games SET status = 'active', started_at = NOW() WHERE game_id = ?");
+            $stmt->execute([$gameId]);
         }
+        return true;
     }
-    
-    // Legacy method for backward compatibility
-    public function saveGame($gameId, $game) {
+
+    /** Mark finished */
+    public function finishGame($gameId, $winnerId = null) {
+        $stmt = $this->pdo->prepare("
+            UPDATE games
+               SET status = 'finished', finished_at = NOW(), winner_id = ?
+             WHERE game_id = ?
+        ");
+        $stmt->execute([$winnerId, $gameId]);
+    }
+
+    /** Legacy shim */
+    public function saveGame($gameId, BaseChess $game) {
         return $this->updateGameState($gameId, $game);
     }
-    
-    public function processResignation($gameId, $resigningUserId) {
-        $gameInfo = $this->getGame($gameId);
-        if (!$gameInfo) {
-            return ['success' => false, 'error' => 'Game not found'];
-        }
-        
-        $game = $gameInfo['game'];
-        $gameData = $gameInfo['data'];
-        
-        // Check if game is active
-        if ($gameData['status'] !== 'active') {
-            return ['success' => false, 'error' => 'Game is not active'];
-        }
-        
-        // Find the player's slot
-        $userPlayerSlot = null;
-        foreach ($gameInfo['players'] as $player) {
-            if ($player['user_id'] == $resigningUserId) {
-                $userPlayerSlot = $player['player_slot'];
-                break;
-            }
-        }
-        
-        if ($userPlayerSlot === null) {
-            return ['success' => false, 'error' => 'You are not in this game'];
-        }
-        
-        // Process resignation
-        $result = $game->resignPlayer($userPlayerSlot);
-        
-        if ($result === true) {
-            // Save the updated game state
-            $this->updateGameState($gameId, $game);
-            
-            // Check if game is over and finish it
-            $gameState = $game->getGameState();
-            if ($gameState['gameStatus']['gameOver']) {
-                $winnerId = $gameState['gameStatus']['winner'];
-                $this->finishGame($gameId, $winnerId, 'resignation');
-                
-                // Update player stats if User class exists
-                if (class_exists('User')) {
-                    $userObj = new User($this->pdo);
-                    
-                    // Update resigning player as loss
-                    $userObj->updateStats($resigningUserId, false);
-                    
-                    // Update winner if there is one
-                    if ($winnerId) {
-                        $userObj->updateStats($winnerId, true);
-                    }
-                }
-            }
-            
-            return ['success' => true, 'message' => 'Resignation processed successfully'];
-        } else {
-            return ['success' => false, 'error' => $result ?: 'Failed to process resignation'];
-        }
-    }
-    
-    public function getUserGames($userId) {
-        $stmt = $this->pdo->prepare("
-            SELECT g.game_id, g.game_name, g.status, g.created_at, g.started_at, g.finished_at,
-                   u.username as creator, winner.username as winner_name
-            FROM games g
-            JOIN game_players gp ON g.game_id = gp.game_id
-            JOIN users u ON g.creator_id = u.id
-            LEFT JOIN users winner ON g.winner_id = winner.id
-            WHERE gp.user_id = ?
-            ORDER BY g.created_at DESC
-        ");
-        $stmt->execute([$userId]);
-        return $stmt->fetchAll();
-    }
-    
-    public function getUserActiveGames($userId) {
-        $stmt = $this->pdo->prepare("
-            SELECT g.game_id, g.game_name, g.status, g.created_at, g.started_at, g.finished_at,
-                   g.player_count, g.board_size,
-                   creator.username as creator, 
-                   winner.username as winner_name,
-                   gp_user.player_slot as user_player_slot,
-                   (SELECT COUNT(*) FROM game_players WHERE game_id = g.game_id) as current_players
-            FROM games g
-            JOIN game_players gp_user ON g.game_id = gp_user.game_id AND gp_user.user_id = ?
-            JOIN users creator ON g.creator_id = creator.id
-            LEFT JOIN users winner ON g.winner_id = winner.id
-            WHERE g.status IN ('waiting', 'active', 'finished')
-            ORDER BY 
-                CASE g.status 
-                    WHEN 'active' THEN 1 
-                    WHEN 'waiting' THEN 2 
-                    WHEN 'finished' THEN 3 
-                END,
-                g.created_at DESC
-            LIMIT 20
-        ");
-        $stmt->execute([$userId]);
-        $games = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        
-        // For each active game, check if it's the user's turn
-        foreach ($games as &$game) {
-            $game['is_your_turn'] = false;
-            
-            if ($game['status'] === 'active') {
-                try {
-                    $gameInfo = $this->getGame($game['game_id']);
-                    if ($gameInfo) {
-                        $gameObj = $gameInfo['game'];
-                        $game['is_your_turn'] = ($gameObj->getCurrentPlayerSlot() == $game['user_player_slot']);
-                    }
-                } catch (Exception $e) {
-                    error_log("Error checking turn for game {$game['game_id']}: " . $e->getMessage());
-                }
-            }
-        }
-        
-        return $games;
-    }
 }
-
-?>

@@ -7,7 +7,7 @@ if (function_exists('opcache_reset')) {
 clearstatcache();
 
 // ------------------------------------------------------------
-// index.php (full file)
+// index.php (full file with fog of war support)
 // ------------------------------------------------------------
 
 // Production-friendly error settings
@@ -27,6 +27,7 @@ require_once 'config/database.php';
 require_once 'classes/Piece.php';
 require_once 'classes/User.php';
 require_once 'classes/GameManager.php';
+require_once 'classes/BaseChess.php';
 require_once 'classes/HexChess.php';
 require_once 'classes/HexChessAI.php';
 require_once 'utils/render.php';
@@ -52,6 +53,33 @@ if ($page === 'game' && !empty($_GET['id'])) {
         $gameData = $gameInfo['data'];
     }
 }
+
+// ONE-TIME DATABASE UPDATE FUNCTION (run this once, then comment out)
+function updateDatabaseForFogOfWar($pdo) {
+    try {
+        // Check if fog_of_war column exists
+        $stmt = $pdo->query("SHOW COLUMNS FROM games LIKE 'fog_of_war'");
+        if ($stmt->rowCount() == 0) {
+            $pdo->exec("ALTER TABLE games ADD COLUMN fog_of_war TINYINT(1) DEFAULT 0");
+            error_log("Added fog_of_war column to games table");
+        }
+        
+        // Check if shogi_drops column exists
+        $stmt = $pdo->query("SHOW COLUMNS FROM games LIKE 'shogi_drops'");
+        if ($stmt->rowCount() == 0) {
+            $pdo->exec("ALTER TABLE games ADD COLUMN shogi_drops TINYINT(1) DEFAULT 0");
+            error_log("Added shogi_drops column to games table");
+        }
+        
+        return true;
+    } catch (Exception $e) {
+        error_log("Database update error: " . $e->getMessage());
+        return false;
+    }
+}
+
+// UNCOMMENT THE NEXT LINE TO RUN DATABASE UPDATE (run once, then comment out)
+// updateDatabaseForFogOfWar($pdo);
 
 // ------------------------------
 // Lightweight JSON API (GET)
@@ -129,6 +157,8 @@ case 'board':
                         g.player_count,
                         g.game_mode,
                         g.ai_difficulty,
+                        g.fog_of_war,
+                        g.shogi_drops,
                         COUNT(gp.user_id) as current_players,
                         creator.username as creator,
                         GROUP_CONCAT(u.username SEPARATOR ', ') as player_names
@@ -156,7 +186,9 @@ AND (g.game_mode != 'ai' OR g.game_mode IS NULL)
                         'creator'        => $game['creator'],
                         'player_names'   => $game['player_names'],
                         'game_mode'      => $game['game_mode'],
-                        'ai_difficulty'  => $game['ai_difficulty']
+                        'ai_difficulty'  => $game['ai_difficulty'],
+                        'fog_of_war'     => (bool)$game['fog_of_war'],
+                        'shogi_drops'    => (bool)$game['shogi_drops']
                     ];
                 }, $games);
 
@@ -182,6 +214,8 @@ AND (g.game_mode != 'ai' OR g.game_mode IS NULL)
                         g.player_count,
                         g.game_mode,
                         g.ai_difficulty,
+                        g.fog_of_war,
+                        g.shogi_drops,
                         gp.player_slot,
                         w.username as winner_name,
                         GROUP_CONCAT(
@@ -225,7 +259,9 @@ AND (g.game_mode != 'ai' OR g.game_mode IS NULL)
                         'is_your_turn' => false,
                         'winner_name'  => $game['winner_name'],
                         'player_names' => $game['player_names'],
-                        'game_mode'    => $game['game_mode'] ?? 'multiplayer'
+                        'game_mode'    => $game['game_mode'] ?? 'multiplayer',
+                        'fog_of_war'   => (bool)$game['fog_of_war'],
+                        'shogi_drops'  => (bool)$game['shogi_drops']
                     ];
                 }, $games);
 
@@ -249,11 +285,12 @@ AND (g.game_mode != 'ai' OR g.game_mode IS NULL)
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action'])) {
 
     header('Content-Type: application/json');
+    // DEBUG: Log what action we received
 
     try {
         switch ($_POST['action']) {
 
-            // --- CREATE GAME (with verbose server logging; safe to keep) ---
+            // --- CREATE GAME (with fog of war support) ---
             case 'create_game':
                 error_log("=== CREATE GAME DEBUG START ===");
                 error_log("POST data: " . print_r($_POST, true));
@@ -264,24 +301,24 @@ AND (g.game_mode != 'ai' OR g.game_mode IS NULL)
                     exit;
                 }
 
-                $gameName    = trim($_POST['game_name'] ?? '');
+                $roomName    = trim($_POST['room_name'] ?? $_POST['game_name'] ?? '');
                 $gameType    = trim($_POST['game_type'] ?? 'online');
                 $playerCount = (int)($_POST['player_count'] ?? 2);
                 $boardSize   = (int)($_POST['board_size'] ?? 7);
                 $turnTimer   = (int)($_POST['turn_timer'] ?? 30);
                 $skipAction  = trim($_POST['skip_action'] ?? 'skip_turn');
-    $fogOfWar    = trim($_POST['fog_of_war'] ?? '0');
-    $shogiDrops  = trim($_POST['shogi_drops'] ?? '0');
+                
+                // NEW: Extract fog of war and shogi drops options
+                $fogOfWar    = isset($_POST['fog_of_war']) && $_POST['fog_of_war'] === '1';
+                $shogiDrops  = isset($_POST['shogi_drops']) && $_POST['shogi_drops'] === '1';
 
-
-
-                error_log("Parsed data - Room: $gameName, Type: $gameType, Players: $playerCount, Board: $boardSize");
+                error_log("Parsed data - Room: $roomName, Type: $gameType, Players: $playerCount, Board: $boardSize, FogOfWar: " . ($fogOfWar ? 'true' : 'false') . ", ShogiDrops: " . ($shogiDrops ? 'true' : 'false'));
 
                 $boardLimits = [
     4 => ['min' => 2, 'max' => 3], // Mini
     5 => ['min' => 2, 'max' => 3], // Small
-    6 => ['min' => 2, 'max' => 4], // Medium
-    7 => ['min' => 2, 'max' => 6], // Large (bumped to 6)
+    6 => ['min' => 2, 'max' => 3], // Medium
+    7 => ['min' => 2, 'max' => 6], // Large
     8 => ['min' => 2, 'max' => 6]  // Jumbo
 ];
 
@@ -316,7 +353,7 @@ AND (g.game_mode != 'ai' OR g.game_mode IS NULL)
 
                 error_log("Mapped game mode: $gameMode, AI difficulty: $aiDifficulty");
 
-                if (empty($gameName)) {
+                if (empty($roomName)) {
                     error_log("Error: Room name is empty");
                     echo json_encode(['success' => false, 'error' => 'Room name is required']);
                     exit;
@@ -339,14 +376,30 @@ AND (g.game_mode != 'ai' OR g.game_mode IS NULL)
                         exit;
                     }
 
+                    // NEW: Create enhanced game data with fog of war options
+                    $enhancedGameData = [
+                        'room_name'    => $roomName,
+                        'player_count' => $playerCount,
+                        'board_size'   => $boardSize,
+                        'game_mode'    => $gameMode,
+                        'ai_difficulty'=> $aiDifficulty,
+                        'game_type'    => $gameType,
+                        'turn_timer'   => $turnTimer,
+                        'skip_action'  => $skipAction,
+                        'fog_of_war'   => $fogOfWar ? 1 : 0,
+                        'shogi_drops'  => $shogiDrops ? 1 : 0,
+                        'starting_positions' => $startingPositions
+                    ];
+
                     $reflection = new ReflectionMethod($gameManager, 'createGame');
                     $paramCount = $reflection->getNumberOfParameters();
                     error_log("createGame method expects $paramCount parameters");
 
+                    // Try enhanced createGame method first
                     if ($paramCount >= 9) {
                         $gameId = $gameManager->createGame(
                             $_SESSION['user_id'],
-                            $gameName,
+                            $roomName,
                             $playerCount,
                             $boardSize,
                             $gameMode,
@@ -355,19 +408,31 @@ AND (g.game_mode != 'ai' OR g.game_mode IS NULL)
                             $turnTimer,
                             $skipAction,
                             $startingPositions,
-                            $fogOfWar,
-                            $shogiDrops
+                            $fogOfWar ? 1 : 0,  // NEW: fog of war parameter
+                            $shogiDrops ? 1 : 0  // NEW: shogi drops parameter
                         );
                     } else {
-                        error_log("Using legacy createGame method");
+                        // Fallback to legacy method, then update with new options
+                        error_log("Using legacy createGame method, will update with new options");
                         $gameId = $gameManager->createGame(
                             $_SESSION['user_id'],
-                            $gameName,
+                            $roomName,
                             $playerCount,
                             $boardSize,
                             $gameMode,
                             $aiDifficulty
                         );
+                        
+                        // Update with fog of war options if game was created
+                        if ($gameId) {
+                            $stmt = $pdo->prepare("
+                                UPDATE games 
+                                SET fog_of_war = ?, shogi_drops = ? 
+                                WHERE game_id = ?
+                            ");
+                            $stmt->execute([$fogOfWar ? 1 : 0, $shogiDrops ? 1 : 0, $gameId]);
+                            error_log("Updated game $gameId with fog_of_war=" . ($fogOfWar ? 1 : 0) . ", shogi_drops=" . ($shogiDrops ? 1 : 0));
+                        }
                     }
 
                     error_log("createGame returned: " . ($gameId ? $gameId : 'false'));
@@ -378,7 +443,9 @@ AND (g.game_mode != 'ai' OR g.game_mode IS NULL)
                             'success'      => true,
                             'game_id'      => $gameId,
                             'game_type'    => $gameType,
-                            'player_count' => $playerCount
+                            'player_count' => $playerCount,
+                            'fog_of_war'   => $fogOfWar,
+                            'shogi_drops'  => $shogiDrops
                         ]);
                     } else {
                         error_log("ERROR: createGame returned false");
@@ -510,14 +577,13 @@ AND (g.game_mode != 'ai' OR g.game_mode IS NULL)
                 echo json_encode(['success' => true]);
                 exit;
 
-            case 'getValidMoves':
+            // NEW: Get board state with fog of war filtering
+            case 'get_board_state':
                 if (!isset($_SESSION['user_id'])) {
                     echo json_encode(['success' => false, 'error' => 'Not logged in']);
                     exit;
                 }
                 $gameId = trim($_POST['game_id'] ?? '');
-                $fromQ  = (int)($_POST['fromQ'] ?? 0);
-                $fromR  = (int)($_POST['fromR'] ?? 0);
                 if ($gameId === '') {
                     echo json_encode(['success' => false, 'error' => 'Game ID required']);
                     exit;
@@ -527,86 +593,394 @@ AND (g.game_mode != 'ai' OR g.game_mode IS NULL)
                     echo json_encode(['success' => false, 'error' => 'Game not found']);
                     exit;
                 }
-                $game     = $gameInfo['game'];
-                $gameData = $gameInfo['data'];
-                $isHotseat = (isset($gameData['game_mode']) && $gameData['game_mode'] === 'hotseat');
 
-                // Gate by user turn only when NOT hotseat
-                if (!$isHotseat && !$game->canUserMove($_SESSION['user_id'])) {
-                    echo json_encode(['success' => false, 'error' => 'Not your turn']);
-                    exit;
-                }
-
-                $validMoves = $game->getValidMoves($fromQ, $fromR);
-                echo json_encode(['success' => true, 'validMoves' => $validMoves]);
-                exit;
-
-            case 'move':
-                if (!isset($_SESSION['user_id'])) {
-                    echo json_encode(['success' => false, 'error' => 'Not logged in']);
-                    exit;
-                }
-                $gameId = trim($_POST['game_id'] ?? '');
-                $fromQ  = (int)($_POST['fromQ'] ?? 0);
-                $fromR  = (int)($_POST['fromR'] ?? 0);
-                $toQ    = (int)($_POST['toQ'] ?? 0);
-                $toR    = (int)($_POST['toR'] ?? 0);
-                if ($gameId === '') {
-                    echo json_encode(['success' => false, 'error' => 'Game ID required']);
-                    exit;
-                }
-                $gameInfo = $gameManager->getGame($gameId);
-                if (!$gameInfo) {
-                    echo json_encode(['success' => false, 'error' => 'Game not found']);
-                    exit;
-                }
-                $game      = $gameInfo['game'];
-                $gameData  = $gameInfo['data'];
-                $isHotseat = (isset($gameData['game_mode']) && $gameData['game_mode'] === 'hotseat');
-
-                // Enforce per-user turn only for non-hotseat
-                if (!$isHotseat && !$game->canUserMove($_SESSION['user_id'])) {
-                    echo json_encode(['success' => false, 'error' => 'Not your turn']);
-                    exit;
-                }
-
-                try {
-                    $result = $game->movePiece($fromQ, $fromR, $toQ, $toR);
-                    if ($result === true) {
-                        if (method_exists($gameManager, 'updateGameState')) {
-                            $gameManager->updateGameState($gameId, $game);
-                        } elseif (method_exists($gameManager, 'saveGame')) {
-                            $gameManager->saveGame($gameId, $game);
-                        }
-
-                        $gameState = $game->getGameState();
-                        echo json_encode([
-                            'success'      => true,
-                            'gameState'    => $gameState,
-                            'kingsInCheck' => $gameState['kingsInCheck'] ?? []
-                        ]);
-                    } else {
-                        $errorMessage = is_string($result) ? $result : 'Invalid move';
-                        $errorType = null;
-                        if (strpos($errorMessage, 'expose') !== false || strpos($errorMessage, 'check') !== false) {
-                            $errorType = 'exposes-king';
-                        } elseif (strpos($errorMessage, 'piece') !== false) {
-                            $errorType = 'wrong-player';
-                        } elseif (strpos($errorMessage, 'no piece') !== false) {
-                            $errorType = 'no-piece';
-                        }
-                        echo json_encode(['success' => false, 'error' => $errorMessage, 'errorType' => $errorType]);
+                $game = $gameInfo['game'];
+                
+                // Determine viewer's player slot
+                $viewerPlayerSlot = null;
+                foreach ($gameInfo['players'] as $p) {
+                    if ($p['user_id'] == $_SESSION['user_id']) {
+                        $viewerPlayerSlot = $p['player_slot'];
+                        break;
                     }
-                } catch (Exception $e) {
-                    echo json_encode(['success' => false, 'error' => 'Move failed: ' . $e->getMessage()]);
                 }
+                
+                $boardState = getBoardStateJson($game, $viewerPlayerSlot);
+                $gameState = $game->getGameState();
+                
+                echo json_encode([
+                    'success' => true,
+                    'board' => $boardState,
+                    'gameState' => $gameState,
+                    'fogOfWar' => $game->isFogOfWarEnabled()
+                ]);
                 exit;
+
+case 'move':
+    $debug = [
+        'timestamp' => date('H:i:s'),
+        'action' => 'move',
+        'step' => 'start',
+        'postData' => $_POST
+    ];
+    
+    if (!isset($_SESSION['user_id'])) {
+        echo json_encode([
+            'success' => false, 
+            'error' => 'Not logged in',
+            'debug' => array_merge($debug, ['step' => 'auth_failed'])
+        ]);
+        exit;
+    }
+    
+    $debug['userId'] = $_SESSION['user_id'];
+    $debug['step'] = 'auth_passed';
+    
+    $gameId = trim($_POST['game_id'] ?? '');
+    $fromQ = (int)($_POST['fromQ'] ?? 0);
+    $fromR = (int)($_POST['fromR'] ?? 0);
+    $toQ = (int)($_POST['toQ'] ?? 0);
+    $toR = (int)($_POST['toR'] ?? 0);
+    
+    $debug = array_merge($debug, [
+        'gameId' => $gameId,
+        'move' => ['from' => [$fromQ, $fromR], 'to' => [$toQ, $toR]]
+    ]);
+    
+    if ($gameId === '') {
+        echo json_encode([
+            'success' => false, 
+            'error' => 'Game ID required',
+            'debug' => array_merge($debug, ['step' => 'no_gameId'])
+        ]);
+        exit;
+    }
+    
+    try {
+        $debug['step'] = 'loading_game';
+        
+        $gameInfo = $gameManager->getGame($gameId);
+        if (!$gameInfo) {
+            echo json_encode([
+                'success' => false, 
+                'error' => 'Game not found',
+                'debug' => array_merge($debug, ['step' => 'game_not_found'])
+            ]);
+            exit;
+        }
+        
+        $debug['step'] = 'game_loaded';
+        $debug['gameStatus'] = $gameInfo['data']['status'] ?? 'unknown';
+        
+        $game = $gameInfo['game'];
+        $gameData = $gameInfo['data'];
+        $players = $gameInfo['players'];
+        
+        $debug['currentPlayer'] = $game->getCurrentPlayerSlot();
+        $debug['gameMode'] = $gameData['game_mode'] ?? 'unknown';
+        
+        // Get piece info
+        $piece = $game->getPiece($fromQ, $fromR);
+        $debug['piece'] = $piece ? ['type' => $piece->type, 'player' => $piece->player] : null;
+        
+        // Check if it's hotseat mode
+        $isHotseat = (isset($gameData['game_mode']) && $gameData['game_mode'] === 'hotseat');
+        $debug['isHotseat'] = $isHotseat;
+        
+        if (!$isHotseat) {
+            $debug['step'] = 'checking_turn';
+            
+            $currentPlayerSlot = $game->getCurrentPlayerSlot();
+            $userPlayerSlot = null;
+            
+            foreach ($players as $player) {
+                if ($player['user_id'] == $_SESSION['user_id']) {
+                    $userPlayerSlot = $player['player_slot'];
+                    break;
+                }
+            }
+            
+            $debug['userPlayerSlot'] = $userPlayerSlot;
+            $debug['currentPlayerSlot'] = $currentPlayerSlot;
+            
+            if ($userPlayerSlot === null) {
+                echo json_encode([
+                    'success' => false, 
+                    'error' => 'You are not in this game',
+                    'debug' => array_merge($debug, ['step' => 'user_not_in_game'])
+                ]);
+                exit;
+            }
+            
+            if ($currentPlayerSlot !== $userPlayerSlot) {
+                echo json_encode([
+                    'success' => false, 
+                    'error' => 'Not your turn',
+                    'debug' => array_merge($debug, ['step' => 'wrong_turn'])
+                ]);
+                exit;
+            }
+        }
+        
+        $debug['step'] = 'attempting_move';
+        
+        // Try to make the move
+        $moveResult = $game->movePiece($fromQ, $fromR, $toQ, $toR);
+        $debug['moveResult'] = $moveResult;
+        
+        if ($moveResult) {
+            $debug['step'] = 'saving_game';
+            
+            // Save the updated game state
+            if (method_exists($gameManager, 'updateGameState')) {
+                $gameManager->updateGameState($gameId, $game);
+                $debug['saveMethod'] = 'updateGameState';
+            } elseif (method_exists($gameManager, 'saveGame')) {
+                $gameManager->saveGame($gameId, $game);
+                $debug['saveMethod'] = 'saveGame';
+            } else {
+                $debug['saveMethod'] = 'no_method_available';
+            }
+            
+            echo json_encode([
+                'success' => true, 
+                'message' => 'Move completed',
+                'debug' => array_merge($debug, ['step' => 'success'])
+            ]);
+        } else {
+            echo json_encode([
+                'success' => false, 
+                'error' => 'Invalid move - movePiece returned false',
+                'debug' => array_merge($debug, ['step' => 'move_failed'])
+            ]);
+        }
+        
+    } catch (Exception $e) {
+        echo json_encode([
+            'success' => false, 
+            'error' => 'Server error: ' . $e->getMessage(),
+            'debug' => array_merge($debug, [
+                'step' => 'exception',
+                'exception' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ])
+        ]);
+    }
+    exit;
+
+case 'getValidMoves':
+    // Start with basic error catching
+    try {
+        error_log("=== getValidMoves DEBUG START ===");
+        
+        // Check session
+        if (!isset($_SESSION['user_id'])) {
+            error_log("No user session");
+            echo json_encode(['success' => false, 'error' => 'Not logged in', 'debug' => 'no_session']);
+            exit;
+        }
+        error_log("User ID: " . $_SESSION['user_id']);
+        
+        // Get parameters
+        $gameId = trim($_POST['game_id'] ?? '');
+        $fromQ = (int)($_POST['fromQ'] ?? 0);
+        $fromR = (int)($_POST['fromR'] ?? 0);
+        
+        error_log("Game ID: $gameId, From: ($fromQ, $fromR)");
+        
+        if ($gameId === '') {
+            error_log("Empty game ID");
+            echo json_encode(['success' => false, 'error' => 'Game ID required', 'debug' => 'empty_gameId']);
+            exit;
+        }
+        
+        // Try to get game
+        error_log("Getting game...");
+        $gameInfo = $gameManager->getGame($gameId);
+        if (!$gameInfo) {
+            error_log("Game not found");
+            echo json_encode(['success' => false, 'error' => 'Game not found', 'debug' => 'no_game']);
+            exit;
+        }
+        error_log("Game found");
+        
+        // Get game object
+        $game = $gameInfo['game'];
+        $gameData = $gameInfo['data'];
+        error_log("Game object type: " . get_class($game));
+        
+        // Check if method exists
+        if (!method_exists($game, 'getValidMoves')) {
+            error_log("getValidMoves method does not exist!");
+            echo json_encode(['success' => false, 'error' => 'Method not found', 'debug' => 'no_method']);
+            exit;
+        }
+        error_log("getValidMoves method exists");
+        
+        // Try to call getValidMoves
+        error_log("Calling getValidMoves($fromQ, $fromR)...");
+        $validMoves = $game->getValidMoves($fromQ, $fromR);
+        error_log("getValidMoves returned " . count($validMoves) . " moves");
+        
+        // Success response
+        echo json_encode([
+            'success' => true, 
+            'validMoves' => $validMoves,
+            'debug' => [
+                'gameId' => $gameId,
+                'fromQ' => $fromQ,
+                'fromR' => $fromR,
+                'moveCount' => count($validMoves),
+                'currentPlayer' => method_exists($game, 'getCurrentPlayerSlot') ? $game->getCurrentPlayerSlot() : 'unknown'
+            ]
+        ]);
+        error_log("=== getValidMoves DEBUG SUCCESS ===");
+        
+    } catch (Exception $e) {
+        error_log("=== getValidMoves ERROR ===");
+        error_log("Error: " . $e->getMessage());
+        error_log("File: " . $e->getFile() . " Line: " . $e->getLine());
+        error_log("Stack: " . $e->getTraceAsString());
+        
+        echo json_encode([
+            'success' => false, 
+            'error' => 'Server error: ' . $e->getMessage(),
+            'debug' => [
+                'exception' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]
+        ]);
+    }
+    exit;
+    
+/*    case 'getValidMoves':
+    if (!isset($_SESSION['user_id'])) {
+        echo json_encode(['success' => false, 'error' => 'Not logged in']);
+        exit;
+    }
+    $gameId = trim($_POST['game_id'] ?? '');
+    $fromQ  = (int)($_POST['fromQ'] ?? 0);
+    $fromR  = (int)($_POST['fromR'] ?? 0);
+    if ($gameId === '') {
+        echo json_encode(['success' => false, 'error' => 'Game ID required']);
+        exit;
+    }
+    $gameInfo = $gameManager->getGame($gameId);
+    if (!$gameInfo) {
+        echo json_encode(['success' => false, 'error' => 'Game not found']);
+        exit;
+    }
+    $game = $gameInfo['game'];
+    $gameData = $gameInfo['data'];
+    $isHotseat = (isset($gameData['game_mode']) && $gameData['game_mode'] === 'hotseat');
+
+    if (!$isHotseat && !$game->canUserMove($_SESSION['user_id'])) {
+        echo json_encode(['success' => false, 'error' => 'Not your turn']);
+        exit;
+    }
+
+    $validMoves = [];
+    $piece = $game->getPiece($fromQ, $fromR);
+    
+    if ($piece) {
+        error_log("=== DEBUGGING MOVES FOR {$piece->type} at ($fromQ, $fromR) ===");
+        
+        $totalChecked = 0;
+        $validCount = 0;
+        $invalidReasons = [];
+        
+        for ($q = -$game->getBoardSize(); $q <= $game->getBoardSize(); $q++) {
+            for ($r = max(-$game->getBoardSize(), -$q - $game->getBoardSize()); 
+                 $r <= min($game->getBoardSize(), -$q + $game->getBoardSize()); $r++) {
+                
+                if ($q === $fromQ && $r === $fromR) continue;
+                
+                $totalChecked++;
+                
+                // Debug each step of isValidMove
+                if (!$game->isValidHex($q, $r)) {
+                    $invalidReasons['invalid_hex'] = ($invalidReasons['invalid_hex'] ?? 0) + 1;
+                    continue;
+                }
+                
+                $targetPiece = $game->getPiece($q, $r);
+                if ($targetPiece && $targetPiece->player === $piece->player) {
+                    $invalidReasons['own_piece'] = ($invalidReasons['own_piece'] ?? 0) + 1;
+                    continue;
+                }
+                
+                // Test the core movement logic for bishops specifically
+                $dq = $q - $fromQ;
+                $dr = $r - $fromR;
+                
+                if ($piece->type === 'bishop') {
+                    // Use reflection to access private isDiagonalMove method
+                    $reflection = new ReflectionClass($game);
+                    $isDiagonalMethod = $reflection->getMethod('isDiagonalMove');
+                    $isDiagonalMethod->setAccessible(true);
+                    $isDiagonal = $isDiagonalMethod->invoke($game, $dq, $dr);
+                    
+                    if (!$isDiagonal) {
+                        $invalidReasons['not_diagonal'] = ($invalidReasons['not_diagonal'] ?? 0) + 1;
+                        continue;
+                    }
+                    
+                    // Use reflection to access private isPathClear method
+                    $isPathClearMethod = $reflection->getMethod('isPathClear');
+                    $isPathClearMethod->setAccessible(true);
+                    $pathClear = $isPathClearMethod->invoke($game, $fromQ, $fromR, $q, $r);
+                    
+                    if (!$pathClear) {
+                        $invalidReasons['path_blocked'] = ($invalidReasons['path_blocked'] ?? 0) + 1;
+                        error_log("Path blocked for bishop move to ($q, $r)");
+                        continue;
+                    }
+                    
+                    error_log("Bishop CAN move to ($q, $r) - dq=$dq, dr=$dr");
+                        $game->debugBishopMove($fromQ, $fromR, $q, $r);
+
+                }
+                
+                if ($game->isValidMove($fromQ, $fromR, $q, $r)) {
+                    $validMoves[] = [
+                        'q' => $q,
+                        'r' => $r,
+                        'type' => $targetPiece ? 'capture' : 'move'
+                    ];
+                    $validCount++;
+                    error_log("VALID MOVE: ($fromQ, $fromR) -> ($q, $r)");
+                } else {
+                    $invalidReasons['isValidMove_failed'] = ($invalidReasons['isValidMove_failed'] ?? 0) + 1;
+                    
+                    // For bishops, let's see exactly why isValidMove failed
+                    if ($piece->type === 'bishop') {
+                        error_log("isValidMove FAILED for bishop move ($fromQ, $fromR) -> ($q, $r), dq=$dq, dr=$dr");
+                        
+                    }
+                }
+            }
+        }
+        
+        error_log("SUMMARY: Checked $totalChecked positions, found $validCount valid moves");
+        error_log("Invalid reasons: " . print_r($invalidReasons, true));
+        error_log("=== END DEBUGGING ===");
+    }
+    
+    echo json_encode(['success' => true, 'validMoves' => $validMoves]);
+    exit;
+*/
 
 case 'ai_move':
     header('Content-Type: application/json; charset=utf-8');
 
+    ini_set('display_errors', 1);
+    error_reporting(E_ALL);
+
     // --- TEMP DEBUG SWITCH (set to false after you fix it) ---
     $AI_DEBUG = true;
+
 
     // Convert warnings/notices into exceptions so they reach catch(Throwable)
     $__old_handler = set_error_handler(function($severity, $message, $file, $line) {
@@ -677,7 +1051,7 @@ case 'ai_move':
             echo json_encode(['success' => false, 'error' => 'Not AI turn']); $__sent = true; exit;
         }
 
-        // Normalize difficulty robustly (covers “advanced”→“player”, “medium”→“basic”, and labels like “Player AI”)
+        // Normalize difficulty robustly (covers "advanced"→"player", "medium"→"basic", and labels like "Player AI")
         $rawDiff = (string)($gameData['ai_difficulty'] ?? 'basic');
         $norm    = strtolower(preg_replace('/[^a-z]/', '', $rawDiff));
         $map     = [
@@ -769,23 +1143,11 @@ function getRoomDisplayName($page, $gameData = null, $game = null, $players = nu
         return null; // No room name for non-game pages
     }
     
-    // DEBUG: Check what's actually in the database
-    error_log("=== DEBUG getRoomDisplayName ===");
-    error_log("gameData contents: " . print_r($gameData, true));
-    error_log("fog_of_war value: " . ($gameData['fog_of_war'] ?? 'NOT_SET'));
-    error_log("shogi_drops value: " . ($gameData['shogi_drops'] ?? 'NOT_SET'));
-    error_log("game_name value: " . ($gameData['game_name'] ?? 'NOT_SET'));  // <- FIXED: Use game_name
-    error_log("room_name value: " . ($gameData['room_name'] ?? 'NOT_SET'));
-    error_log("================================");
-    
     $gameMode = $gameData['game_mode'] ?? 'multiplayer';
-    
-    // FIXED: Use game_name instead of room_name
-    $roomName = $gameData['game_name'] ?? '';
+    $roomName = $gameData['room_name'] ?? '';
     
     // If there's a custom room name that's not auto-generated, use it
-    // Updated regex to account for fog/shogi options in parentheses
-    if ($roomName && !preg_match('/^(Online|Hotseat|\w+ AI).*(Mini|Small|Medium|Large|Jumbo)(\s*\([^)]*\))?$/', $roomName)) {
+    if ($roomName && !preg_match('/^(Online|Hotseat|\w+ AI).*(Mini|Small|Medium|Large|Jumbo).*$/', $roomName)) {
         return $roomName;
     }
     
@@ -819,105 +1181,8 @@ function getRoomDisplayName($page, $gameData = null, $game = null, $players = nu
         $details[] = $sizeName;
     }
     
-    // Add fog of war and shogi drops options from database
-    $options = [];
-    if (isset($gameData['fog_of_war']) && $gameData['fog_of_war'] == 1) {
-        $options[] = 'Fog';
-        error_log("DEBUG: Adding 'Fog' to options");
-    }
-    if (isset($gameData['shogi_drops']) && $gameData['shogi_drops'] == 1) {
-        $options[] = 'Drops';
-        error_log("DEBUG: Adding 'Drops' to options");
-    }
-    
-    $displayName = implode(' ', $details);
-    
-    // Add options in parentheses if any exist
-    if (!empty($options)) {
-        $displayName .= ' (' . implode(', ', $options) . ')';
-        error_log("DEBUG: Final display name with options: " . $displayName);
-    }
-    
-    error_log("DEBUG: Final display name: " . $displayName);
-    return $displayName;
+    return implode(' ', $details);
 }
-
-/*
-function getRoomDisplayName($page, $gameData = null, $game = null, $players = null) {
-    if ($page !== 'game' || !$gameData || !$game) {
-        return null; // No room name for non-game pages
-    }
-    
-    // DEBUG: Add this to see what's in the database
-    error_log("=== DEBUG getRoomDisplayName ===");
-    error_log("gameData contents: " . print_r($gameData, true));
-    error_log("fog_of_war value: " . ($gameData['fog_of_war'] ?? 'NOT_SET'));
-    error_log("shogi_drops value: " . ($gameData['shogi_drops'] ?? 'NOT_SET'));
-    error_log("game_name value: " . ($gameData['game_name'] ?? 'NOT_SET'));
-    error_log("================================");
-    
-    $gameMode = $gameData['game_mode'] ?? 'multiplayer';
-    $gameName = $gameData['game_name'] ?? '';
-    
-    // If there's a custom room name that's not auto-generated, use it
-    // Updated regex to account for fog/shogi options in parentheses
-    if ($gameName && !preg_match('/^(Online|Hotseat|\w+ AI).*(Mini|Small|Medium|Large|Jumbo)(\s*\([^)]*\))?$/', $gameName)) {
-        return $gameName;
-    }
-    
-    // Generate descriptive name based on game settings
-    $details = [];
-    
-    // Game type and AI difficulty  
-    if ($gameMode === 'ai') {
-        $aiDifficulty = $gameData['ai_difficulty'] ?? 'basic';
-        $aiName = ucfirst($aiDifficulty);
-        $details[] = "{$aiName} AI";
-    } else if ($gameMode === 'hotseat') {
-        $details[] = "Hotseat";
-    } else {
-        $details[] = "Online";
-    }
-    
-    // Player count (for non-AI or multiplayer)
-    if ($players && ($gameMode !== 'ai' || count($players) > 2)) {
-        $playerCount = count($players);
-        if ($playerCount > 2) {
-            $details[] = "{$playerCount}P";
-        }
-    }
-    
-    // Board size
-    if (method_exists($game, 'getBoardSize')) {
-        $boardSize = $game->getBoardSize();
-        $sizeNames = [4 => 'Mini', 5 => 'Small', 6 => 'Medium', 7 => 'Large', 8 => 'Jumbo'];
-        $sizeName = $sizeNames[$boardSize] ?? 'Medium';
-        $details[] = $sizeName;
-    }
-    
-    // *** NEW: Add fog of war and shogi drops options from database ***
-    $options = [];
-    if (isset($gameData['fog_of_war']) && $gameData['fog_of_war'] == '1') {
-        $options[] = 'Fog';
-        error_log("DEBUG: Adding 'Fog' to options");
-    }
-    if (isset($gameData['shogi_drops']) && $gameData['shogi_drops'] == '1') {
-        $options[] = 'Drops';
-        error_log("DEBUG: Adding 'Drops' to options");
-    }
-    
-    $displayName = implode(' ', $details);
-    
-    // Add options in parentheses if any exist
-    if (!empty($options)) {
-        $displayName .= ' (' . implode(', ', $options) . ')';
-        error_log("DEBUG: Final display name with options: " . $displayName);
-    }
-    
-    error_log("DEBUG: Final display name: " . $displayName);
-    return $displayName;
-}
-*/
 ?>
 
 
@@ -933,12 +1198,11 @@ function getRoomDisplayName($page, $gameData = null, $game = null, $players = nu
 <div class="header">
     <div class="header-title-section">
         <h1>🏰 HexChess Online</h1>
-            <?php 
-        $roomDisplayName = getRoomDisplayName($page, $gameData ?? null, $game ?? null, $players ?? null);
-        if ($roomDisplayName): 
-    ?>
-        <div style="color: white; font-size: 16px;">"<?php echo htmlspecialchars($roomDisplayName); ?>"</div>
-    <?php endif; ?>
+ <?php if ($page === 'game' && isset($gameData['game_name'])): ?>
+    <div style="font-size: 18px; background: linear-gradient(45deg, #fff, #e0e0e0); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin-top: 6px;">
+        <!?php echo htmlspecialchars($gameData['game_name']); ?>
+    </div>
+<?php endif; ?>
     </div>
     
     <div class="user-info">
@@ -1052,7 +1316,7 @@ function getRoomDisplayName($page, $gameData = null, $game = null, $players = nu
             </div>
 
             <div id="timer-settings" class="timer-settings" style="display:none;">
-              <div class="timer-info"><strong>⏱️ Turn Timer</strong></div>
+              <div class="timer-info"><strong>⏱️ Turn Timer (for 4-6 player games)</strong></div>
               <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                 <div class="form-group">
                   <label>Turn Time Limit:</label>
@@ -1074,15 +1338,14 @@ function getRoomDisplayName($page, $gameData = null, $game = null, $players = nu
             </div>
 
 
-<!-- Add this section AFTER the timer settings div and BEFORE the game name div -->
-
+<!-- NEW: Enhanced game options section with fog of war -->
 <div class="form-group">
-  <label>Options:</label>
+  <label>Game Options:</label>
   <div class="hexchess-options">
     <div class="option-item">
       <input type="checkbox" name="fog_of_war" id="fog_of_war" onchange="updateEnhancedDefaultGameName()">
       <label for="fog_of_war" class="option-label">
-        <strong>Fog of War</strong>
+        <strong>🌫️ Fog of War</strong>
         <span class="option-description">
           <br>Only see opponent pieces that your pieces can attack or are adjacent to
         </span>
@@ -1092,7 +1355,7 @@ function getRoomDisplayName($page, $gameData = null, $game = null, $players = nu
     <div class="option-item">
       <input type="checkbox" name="shogi_drops" id="shogi_drops" onchange="updateEnhancedDefaultGameName()">
       <label for="shogi_drops" class="option-label">
-        <strong>Shogi Drops</strong>
+        <strong>♻️ Shogi Drops</strong>
         <span class="option-description">
           <br>Captured pieces join your army and can be dropped back into play
         </span>
@@ -1104,7 +1367,7 @@ function getRoomDisplayName($page, $gameData = null, $game = null, $players = nu
 
             <div class="form-group">
               <label>Game Name:</label>
-              <input type="text" name="game_name" id="game_name"
+              <input type="text" name="room_name" id="game_name"
                      placeholder="Enter custom name or use default"
                      value="2-Player Large Game" maxlength="100">
               <div class="form-helper">
@@ -1163,7 +1426,7 @@ function getRoomDisplayName($page, $gameData = null, $game = null, $players = nu
             <div id="desc-queen" class="piece-desc"><h4>♛ Queen Movement</h4><p>Combines rook + bishop movement on hexes.</p></div>
             <div id="desc-rook"  class="piece-desc"><h4>♜ Rook Movement</h4><p>Any distance along three orthogonal axes.</p></div>
             <div id="desc-bishop"class="piece-desc"><h4>♝ Bishop Movement</h4><p>Any distance along the three diagonals.</p></div>
-            <div id="desc-knight"class="piece-desc"><h4>♞ Knight Movement</h4><p>Jumps in hex “L”-shapes.</p></div>
+            <div id="desc-knight"class="piece-desc"><h4>♞ Knight Movement</h4><p>Jumps in hex "L"-shapes.</p></div>
             <div id="desc-pawn"  class="piece-desc"><h4>♟ Pawn Movement</h4><p>Forward one; capture forward diagonals.</p></div>
           </div>
         </div>
@@ -1217,6 +1480,10 @@ function getRoomDisplayName($page, $gameData = null, $game = null, $players = nu
         $isAIGame          = ($gameMode === 'ai');
         $currentPlayerSlot = method_exists($game, 'getCurrentPlayerSlot') ? $game->getCurrentPlayerSlot() : 0;
 
+        // NEW: Get fog of war and shogi drops settings
+        $fogOfWarEnabled = isset($gameData['fog_of_war']) && $gameData['fog_of_war'] == 1;
+        $shogiDropsEnabled = isset($gameData['shogi_drops']) && $gameData['shogi_drops'] == 1;
+
         $aiPlayerSlot = null;
         if ($isAIGame) {
             foreach ($players as $pl) {
@@ -1250,69 +1517,187 @@ var aiPlayerSlot       = <?php
   }
   echo json_encode($aiSlot);
 ?>;
+
+// NEW: Fog of war and shogi drops globals
+var fogOfWarEnabled = <?php echo $fogOfWarEnabled ? 'true' : 'false'; ?>;
+var shogiDropsEnabled = <?php echo $shogiDropsEnabled ? 'true' : 'false'; ?>;
 </script>
 
     <div class="game-area">
       <div class="game-sidebar">
-<?php if ($gameMode === 'hotseat'): ?>
-  <!-- For hotseat, only show the prominent turn indicator -->
-  <div style="background: rgba(255,255,255,0.1); border-radius: 8px; padding: 15px; margin-bottom: 15px; text-align: center;">
-    <?php 
-      $currentSlot = $game->getCurrentPlayerSlot();
-      $playerEmojis = ['🔴', '🔵', '🟢', '🟡', '🟣', '🟠'];
-      $playerNames = ['Red', 'Blue', 'Green', 'Yellow', 'Purple', 'Bronze'];
-    ?>
-<!-- ADD THIS ROOM NAME DISPLAY -->
-<!--
-<div style="background: rgba(255,255,255,0.05); padding: 8px 12px; margin-bottom: 10px; border-radius: 6px; border-left: 3px solid #2ecc71;">
-    <h4 style="margin: 0; font-size: 14px; color: #2ecc71;"><?php echo htmlspecialchars($gameData['game_name'] ?? 'Unnamed Game'); ?> Room</h4>
-</div>
-    -->
-    <div style="font-size: 24px; padding: 10px; background: rgba(255,255,255,0.2); border-radius: 6px; border: 2px solid #2ecc71;">
-      <?php echo $playerEmojis[$currentSlot] . ' ' . $playerNames[$currentSlot] . '\'s Turn'; ?>
+        <h2><?php echo htmlspecialchars($gameData['game_name'] ?? 'HexChess Game'); ?></h2>
+        
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="64" height="64">
+  <polygon points="64,8 112,36 112,92 64,120 16,92 16,36" 
+           fill="black" stroke="white" stroke-width="3"/>
+  <text x="64" y="96" font-family="Georgia, serif" font-size="110" 
+        text-anchor="middle" fill="white">♘</text>
+</svg>
+
+        <!-- NEW: Game options display -->
+        <?php if ($fogOfWarEnabled || $shogiDropsEnabled): ?>
+        <div class="game-options">
+          <?php if ($fogOfWarEnabled): ?>
+            <span class="game-option-badge fog-of-war">🌫️ Fog of War</span>
+          <?php endif; ?>
+          <?php if ($shogiDropsEnabled): ?>
+            <span class="game-option-badge shogi-drops">♻️ Shogi Drops</span>
+          <?php endif; ?>
+        </div>
+        <?php endif; ?>
+
+<?php
+// Replace the game status section in index.php (around line 850-900)
+
+if ($gameMode === 'hotseat'): ?>
+  <!-- For hotseat, check if game is over first -->
+  <?php if ($gameState['gameStatus']['gameOver']): ?>
+    <div style="background: rgba(255,255,255,0.15); border-radius: 8px; padding: 15px; margin-bottom: 15px; text-align: center;">
+      <div style="font-size: 24px; padding: 10px; background: rgba(255,255,255,0.2); border-radius: 6px; border: 2px solid #e74c3c;">
+        <?php 
+          // Show proper end game message
+          if (isset($gameState['gameStatus']['winner'])) {
+            $winnerSlot = null;
+            foreach ($players as $pl) {
+              if ($pl['user_id'] == $gameState['gameStatus']['winner']) {
+                $winnerSlot = $pl['player_slot'];
+                break;
+              }
+            }
+            if ($winnerSlot !== null) {
+              $playerEmojis = ['🔴', '🔵', '🟢', '🟡', '🟣', '🟠'];
+              $playerNames = ['Red', 'Blue', 'Green', 'Yellow', 'Purple', 'Bronze'];
+              $reason = $gameState['gameStatus']['reason'] ?? 'checkmate';
+              if ($reason === 'checkmate') {
+                echo '♛ CHECKMATE! ' . $playerEmojis[$winnerSlot] . ' ' . $playerNames[$winnerSlot] . ' Wins!';
+              } else if ($reason === 'resignation') {
+                echo '🏳️ ' . $playerEmojis[$winnerSlot] . ' ' . $playerNames[$winnerSlot] . ' Wins by Resignation!';
+              } else {
+                echo '🎉 ' . $playerEmojis[$winnerSlot] . ' ' . $playerNames[$winnerSlot] . ' Wins!';
+              }
+            } else {
+              echo '🎉 Game Complete!';
+            }
+          } else {
+            $reason = $gameState['gameStatus']['reason'] ?? 'draw';
+            if ($reason === 'stalemate') {
+              echo '🤝 STALEMATE - Draw!';
+            } else if ($reason === 'insufficient_material') {
+              echo '🤝 DRAW - Insufficient Material!';
+            } else if ($reason === 'repetition') {
+              echo '🤝 DRAW - Repetition!';
+            } else {
+              echo '🤝 DRAW - Game Ended in Tie!';
+            }
+          }
+        ?>
+      </div>
     </div>
-  </div>
+  <?php else: ?>
+    <!-- Normal turn indicator for active game -->
+    <div style="background: rgba(255,255,255,0.1); border-radius: 8px; padding: 15px; margin-bottom: 15px; text-align: center;">
+      <?php 
+        $currentSlot = $game->getCurrentPlayerSlot();
+        $playerEmojis = ['🔴', '🔵', '🟢', '🟡', '🟣', '🟠'];
+        $playerNames = ['Red', 'Blue', 'Green', 'Yellow', 'Purple', 'Bronze'];
+      ?>
+      <div style="font-size: 24px; padding: 10px; background: rgba(255,255,255,0.2); border-radius: 6px; border: 2px solid #2ecc71;">
+        <?php echo $playerEmojis[$currentSlot] . ' ' . $playerNames[$currentSlot] . '\'s Turn'; ?>
+      </div>
+    </div>
+  <?php endif; ?>
 <?php else: ?>
   <!-- Regular status for online/AI games -->
   <div class="game-status">
     <h3 id="gameStatus">
       <?php
         if ($gameState['gameStatus']['gameOver']) {
-            echo "Game Over";
+          // Show specific end game reason instead of generic "Game Over"
+          if (isset($gameState['gameStatus']['winner'])) {
+            $reason = $gameState['gameStatus']['reason'] ?? 'checkmate';
+            if ($reason === 'checkmate') {
+              echo "♛ Checkmate!";
+            } else if ($reason === 'resignation') {
+              echo "🏳️ Resignation!";
+            } else {
+              echo "🎉 Victory!";
+            }
+          } else {
+            $reason = $gameState['gameStatus']['reason'] ?? 'draw';
+            if ($reason === 'stalemate') {
+              echo "🤝 Stalemate!";
+            } else if ($reason === 'insufficient_material') {
+              echo "🤝 Draw - Insufficient Material!";
+            } else if ($reason === 'repetition') {
+              echo "🤝 Draw - Repetition!";
+            } else {
+              echo "🤝 Draw!";
+            }
+          }
         } elseif ($gameData['status'] === 'waiting') {
-            echo "Waiting for Players";
+          echo "Waiting for Players";
         } else {
-            echo "Game Active";
+          echo "Game Active";
         }
       ?>
     </h3>
     <p id="gameStatusText">
       <?php
         if ($gameState['gameStatus']['gameOver']) {
-            if (isset($gameState['gameStatus']['winner'])) {
-                $winnerName = "Unknown";
-                foreach ($players as $pl) if ($pl['user_id'] == $gameState['gameStatus']['winner']) { $winnerName = $pl['username']; break; }
-                echo "Winner: " . htmlspecialchars($winnerName);
-            } else {
-                $reason = $gameState['gameStatus']['reason'] ?? 'draw';
-                $msg = ($reason === 'stalemate') ? '🤝 STALEMATE - No legal moves available' : '🤝 DRAW - Game ended in a tie';
-                echo '<div style="font-size:20px;font-weight:bold;color:#f39c12;">' . $msg . '</div>';
+          if (isset($gameState['gameStatus']['winner'])) {
+            $winnerName = "Unknown";
+            foreach ($players as $pl) {
+              if ($pl['user_id'] == $gameState['gameStatus']['winner']) { 
+                $winnerName = $pl['username']; 
+                break; 
+              }
             }
+            $reason = $gameState['gameStatus']['reason'] ?? 'checkmate';
+            if ($reason === 'checkmate') {
+              echo '<div style="font-size:18px;font-weight:bold;color:#e74c3c;">🏆 ' . htmlspecialchars($winnerName) . ' wins by checkmate!</div>';
+            } else if ($reason === 'resignation') {
+              echo '<div style="font-size:18px;font-weight:bold;color:#3498db;">🏆 ' . htmlspecialchars($winnerName) . ' wins by resignation!</div>';
+            } else {
+              echo '<div style="font-size:18px;font-weight:bold;color:#2ecc71;">🏆 Winner: ' . htmlspecialchars($winnerName) . '</div>';
+            }
+          } else {
+            $reason = $gameState['gameStatus']['reason'] ?? 'draw';
+            if ($reason === 'stalemate') {
+              echo '<div style="font-size:18px;font-weight:bold;color:#f39c12;">🤝 STALEMATE - No legal moves available</div>';
+            } else if ($reason === 'insufficient_material') {
+              echo '<div style="font-size:18px;font-weight:bold;color:#f39c12;">🤝 DRAW - Insufficient material to checkmate</div>';
+            } else if ($reason === 'repetition') {
+              echo '<div style="font-size:18px;font-weight:bold;color:#f39c12;">🤝 DRAW - Position repeated three times</div>';
+            } else {
+              echo '<div style="font-size:18px;font-weight:bold;color:#f39c12;">🤝 DRAW - Game ended in a tie</div>';
+            }
+          }
         } elseif ($gameData['status'] === 'waiting') {
-            echo "Need " . ($game->getPlayerCount() - count($players)) . " more player(s)";
+          echo "Need " . ($game->getPlayerCount() - count($players)) . " more player(s)";
         } elseif ($canMove) {
-            echo "Your turn!";
+          echo "Your turn!";
         } else {
-            echo "Waiting for " . ucfirst($game->getCurrentPlayer()) . " player";
+          // Show whose turn it is only if game is still active
+          $currentPlayerName = "Unknown";
+          $currentSlot = $game->getCurrentPlayerSlot();
+          $playerNames = ['Red', 'Blue', 'Green', 'Yellow', 'Purple', 'Bronze'];
+          $currentPlayerName = $playerNames[$currentSlot] ?? 'Player ' . ($currentSlot + 1);
+          echo "Waiting for " . $currentPlayerName . " player";
         }
       ?>
     </p>
-          <?php if ($gameState['isInCheck']): ?>
-            <div class="check-warning"><strong>⚠️ Your King is in Check!</strong></div>
-          <?php endif; ?>
+    <?php if (!$gameState['gameStatus']['gameOver'] && $gameState['isInCheck']): ?>
+      <div class="check-warning"><strong>⚠️ Your King is in Check!</strong></div>
+    <?php endif; ?>
+    
+    <!-- NEW: Fog of war status indicator (only show during active game) -->
+    <?php if (!$gameState['gameStatus']['gameOver'] && $fogOfWarEnabled): ?>
+    <div class="fog-status active">
+      <small>👁️ Limited visibility - only see pieces you can attack or that are adjacent</small>
+    </div>
+    <?php endif; ?>
   </div>
 <?php endif; ?>
-
 
 
 <div class="player-list">
@@ -1362,7 +1747,9 @@ var aiPlayerSlot       = <?php
            data-game-mode="<?php echo htmlspecialchars($gameMode); ?>"
            data-current-player-slot="<?php echo (int)$currentPlayerSlot; ?>"
            data-user-player-slot="<?php echo (int)($userPlayerSlot ?? -1); ?>"
-           data-ai-player-slot="<?php echo ($aiPlayerSlot === null ? '' : (int)$aiPlayerSlot); ?>">
+           data-ai-player-slot="<?php echo ($aiPlayerSlot === null ? '' : (int)$aiPlayerSlot); ?>"
+           data-fog-of-war="<?php echo $fogOfWarEnabled ? '1' : '0'; ?>"
+           data-shogi-drops="<?php echo $shogiDropsEnabled ? '1' : '0'; ?>">
       </div>
 
 <script>
@@ -1382,6 +1769,10 @@ var aiPlayerSlot       = <?php
   window.currentPlayerSlot = cps !== '' ? parseInt(cps, 10) : null;
   window.userPlayerSlot    = ups !== '' ? parseInt(ups, 10) : null;
   window.aiPlayerSlot      = ais === '' ? null : parseInt(ais, 10);
+
+  // NEW: Fog of war and shogi drops globals
+  window.fogOfWarEnabled   = root.dataset.fogOfWar === '1';
+  window.shogiDropsEnabled = root.dataset.shogiDrops === '1';
 
   // Seed from server flag (if present) then normalize for AI games
   window.userCanMove = (root.dataset.userCanMove === '1');
@@ -1418,8 +1809,11 @@ var aiPlayerSlot       = <?php
 </script>
 
       <!-- Actual board -->
-      <div class="game-main">
-        <?php echo renderBoard($game, $gameId, $canMove); ?>
+      <div class="game-main <?php echo $fogOfWarEnabled ? 'fog-of-war-enabled' : ''; ?>">
+        <?php 
+        // NEW: Render board with fog of war support
+        echo renderBoard($game, $gameId, $canMove, $userPlayerSlot); 
+        ?>
       </div>
     </div>
 
@@ -1448,6 +1842,10 @@ var aiPlayerSlot       = <?php
 
   var userCanMove = <?php echo $canMove ? 'true' : 'false'; ?>;
   if (gameMode === 'hotseat') { userCanMove = true; }
+
+  // NEW: Game options globals
+  var fogOfWarEnabled = <?php echo $fogOfWarEnabled ? 'true' : 'false'; ?>;
+  var shogiDropsEnabled = <?php echo $shogiDropsEnabled ? 'true' : 'false'; ?>;
 </script>
 
 <script>
@@ -1478,7 +1876,7 @@ var aiPlayerSlot       = <?php
         location.reload();
       } else {
         console.warn("AI move declined:", (d && d.error) || d);
-        // Allow another attempt this load (e.g., transient “Not AI turn”)
+        // Allow another attempt this load (e.g., transient "Not AI turn")
         aiTriggeredThisLoad = false;
       }
     })
@@ -1515,8 +1913,14 @@ var aiPlayerSlot       = <?php
 <?php if ($page === 'lobby'): ?>
 <!-- FIXED: Single lobby JavaScript section -->
 <script>
+console.log('INDEX.PHP LOBBY SCRIPT DISABLED FOR TESTING');
+// Early exit - disable this entire script for testing
+if (true) {
+    console.log('Exiting index.php lobby script');
+    // Don't return here, just skip to the end
+} else {
+    
 
-{
 console.log('✅ Loading enhanced room creation (conflict-free version)');
 
 /*
@@ -1596,13 +2000,13 @@ function updatePlayerOptions() {
 }
 
 function updateTimerVisibility() {
+    const playerCountSelect = document.getElementById('player_count');
     const timerSettings = document.getElementById('timer-settings');
     
-    if (!timerSettings) return;
+    if (!playerCountSelect || !timerSettings) return;
     
-    // Always show timer settings for all games
-    // Future: we'll add logic to hide timers for specific game types when needed
-    timerSettings.style.display = 'block';
+    const playerCount = parseInt(playerCountSelect.value);
+    timerSettings.style.display = (playerCount >= 4) ? 'block' : 'none';
 }
 
 function updateEnhancedDefaultGameName() {
@@ -1734,10 +2138,8 @@ function showValidationError(message) {
 function createEnhancedGame(event) {
     event.preventDefault();
     console.log('🎮 Creating enhanced game...');
-
+    
     const formData = new FormData(event.target);
-    console.log('game_name value:', formData.get('game_name'));
-
     const boardSize = parseInt(formData.get('board_size'));
     const playerCount = parseInt(formData.get('player_count'));
     const gameType = formData.get('game_type');
@@ -1753,7 +2155,7 @@ function createEnhancedGame(event) {
     
     const payload = {
         action: 'create_game',
-        game_name: formData.get('game_name') || `${playerCount}-Player Game`,
+        room_name: formData.get('room_name') || `${playerCount}-Player Game`,
         player_count: formData.get('player_count'),
         board_size: formData.get('board_size'),
         ai_difficulty: formData.get('ai_difficulty') || 'player',
@@ -1764,9 +2166,6 @@ function createEnhancedGame(event) {
         shogi_drops: formData.get('shogi_drops') ? '1' : '0'
     };
     
-console.log('game_name value:', formData.get('game_name'));
-console.log('final payload game_name:', payload.game_name);
-
     console.log('📤 Sending payload:', payload);
     
     const btn = event.target.querySelector('button[type="submit"]');
@@ -1888,7 +2287,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 
   <!-- Core JS bundle -->
-  <script src="assets/game.js?v=72"></script>
+  <script src="assets/game.js?v=71"></script>
 
   <script>
     // Page bootstrap
@@ -1903,4 +2302,3 @@ document.addEventListener('DOMContentLoaded', function() {
 
 </body>
 </html>
-

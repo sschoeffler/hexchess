@@ -15,12 +15,50 @@ class HexChessAI {
         'king' => 1000
     ];
     
-    public function __construct($game, $difficulty = 'medium', $playerSlot = 1) {
+public function __construct($game, $difficulty = 'basic', $playerSlot = 1) {
+    $this->game = $game;
+    $this->difficulty = $this->normalizeDifficulty($difficulty);
+    $this->playerSlot = (int)$playerSlot;
+}
+
+private function getMoveCount(): int {
+    // Prefer a real getter if HexChess exposes one
+    if (method_exists($this->game, 'getMoveCount')) {
+        return (int)$this->game->getMoveCount();
+    }
+    // Fallback: pull from game state if provided
+    if (method_exists($this->game, 'getGameState')) {
+        $state = $this->game->getGameState();
+        if (isset($state['moveCount'])) return (int)$state['moveCount'];
+    }
+    // Last resort: 0
+    return 0;
+}
+
+private function normalizeDifficulty($d) {
+    $x = strtolower(trim($d));
+    // strip punctuation/extra spaces to catch “Player AI”, etc.
+    $x = preg_replace('/[^a-z]/', '', $x);
+    // back-compat map
+    $map = [
+        'advanced' => 'player',
+        'playerai' => 'player',
+        'player'   => 'player',
+        'medium'   => 'basic',
+        'basicai'  => 'basic',
+        'basic'    => 'basic',
+        'easy'     => 'easy',
+        'hard'     => 'hard',
+    ];
+    return $map[$x] ?? 'basic';
+}
+
+/*    public function __construct($game, $difficulty = 'basic', $playerSlot = 1) {
         $this->game = $game;
         $this->difficulty = $difficulty;
         $this->playerSlot = $playerSlot;
     }
-    
+*/    
     /**
      * Get the best move for the current AI player
      */
@@ -35,17 +73,17 @@ class HexChessAI {
             case 'easy':
                 return $this->getRandomMove($validMoves);
                 
-            case 'medium':
-                return $this->getMediumMove($validMoves);
+            case 'basic':
+                return $this->getBasicMove($validMoves);
                 
-            case 'advanced':
-                return $this->getAdvancedMove($validMoves);
+            case 'player':
+                return $this->getPlayerMove($validMoves);
                 
             case 'hard':
                 return $this->getHardMove($validMoves);
                 
             default:
-                return $this->getMediumMove($validMoves);
+                return $this->getBasicMove($validMoves);
         }
     }
     
@@ -57,9 +95,9 @@ class HexChessAI {
     }
     
     /**
-     * Medium AI - Basic position evaluation
+     * Basic AI - Basic position evaluation
      */
-    private function getMediumMove($validMoves) {
+    private function getBasicMove($validMoves) {
         $bestMove = null;
         $bestScore = -9999;
         
@@ -76,9 +114,9 @@ class HexChessAI {
     }
     
     /**
-     * ENHANCED: Advanced AI - With threat detection, tactical awareness, and defensive play
+     * ENHANCED: Player AI - With threat detection, tactical awareness, and defensive play
      */
-    private function getAdvancedMove($validMoves) {
+    private function getPlayerMove($validMoves) {
         $bestMove = null;
         $bestScore = -9999;
         
@@ -102,7 +140,7 @@ class HexChessAI {
                 $developmentMoves[] = $move;
             }
             
-            $score = $this->evaluateAdvancedMove($move, $threatenedPieces);
+            $score = $this->evaluatePlayerMove($move, $threatenedPieces);
             
             if ($score > $bestScore) {
                 $bestScore = $score;
@@ -113,7 +151,7 @@ class HexChessAI {
         // Log AI reasoning for debugging
         $this->logAIThinking($threatenedPieces, $captureMoves, $defensiveMoves);
         
-        return $bestMove ?: $this->getMediumMove($validMoves);
+        return $bestMove ?: $this->getBasicMove($validMoves);
     }
     
     /**
@@ -145,7 +183,7 @@ class HexChessAI {
             }
         }
         
-        return $bestMove ?: $this->getMediumMove($validMoves);
+        return $bestMove ?: $this->getBasicMove($validMoves);
     }
     
     /**
@@ -222,137 +260,133 @@ class HexChessAI {
         return $attackers;
     }
     
-    /**
-     * ENHANCED: Advanced move evaluation with threat detection, tactics, and strategy
-     */
 /**
- * ENHANCED: Advanced move evaluation with exchange analysis and destination safety
- */
-private function evaluateAdvancedMove($move, $threatenedPieces) {
-    $score = 0;
-    $movingPiece = $this->game->getPiece($move['fromQ'], $move['fromR']);
-    
-    if (!$movingPiece) return -9999; // Invalid move
-    
-    // Basic capture value
-    $capturedPiece = $this->game->getPiece($move['toQ'], $move['toR']);
-    if ($capturedPiece && $capturedPiece->player !== $this->playerSlot) {
-        $score += $this->pieceValues[$capturedPiece->type];
-        
-        // BONUS: High-value captures get extra points
-        if ($this->pieceValues[$capturedPiece->type] >= 5) {
-            $score += 2; // Extra bonus for rook/queen captures
-        }
-    }
-    
-    // *** CRITICAL FIX 1: EXCHANGE ANALYSIS ***
-    // Check if our piece will be captured after this move
-    $destinationAttackers = $this->getPiecesAttacking($move['toQ'], $move['toR']);
-    if (!empty($destinationAttackers)) {
-        // Our piece will be captured! Subtract its value
-        $ourPieceValue = $this->pieceValues[$movingPiece->type];
-        $lowestAttackerValue = min(array_column($destinationAttackers, 'value'));
-        
-        // Net exchange calculation
-        if ($capturedPiece) {
-            // We capture something, but lose our piece: net = captured - our_piece
-            $netMaterial = $this->pieceValues[$capturedPiece->type] - $ourPieceValue;
-            if ($netMaterial < 0) {
-                // Bad exchange! Heavy penalty
-                $score += $netMaterial * 2; // Double penalty for bad exchanges
-            }
-        } else {
-            // We don't capture anything and lose our piece - terrible move!
-            $score -= $ourPieceValue * 3; // Triple penalty for hanging pieces
-        }
-        
-        // Extra penalty for hanging high-value pieces
-        if ($ourPieceValue >= 5) {
-            $score -= 8; // Major pieces should never be left hanging
-        }
-    }
-    
-    // *** CRITICAL FIX 2: DESTINATION SAFETY CHECK ***
-    // Even if not immediately captured, is this square dangerous?
-    if (!empty($destinationAttackers)) {
-        $dangerLevel = count($destinationAttackers);
-        $score -= $dangerLevel * 0.5; // Penalty for moving to attacked squares
-    }
-    
-    // MAJOR BONUS: Saving a threatened piece
-    foreach ($threatenedPieces as $threatened) {
-        if ($threatened['q'] == $move['fromQ'] && $threatened['r'] == $move['fromR']) {
-            // This move saves a threatened piece!
-            $saveBonus = $threatened['value'] * 2; // Double the piece value as bonus
-            $score += $saveBonus;
+     * ENHANCED: Player move evaluation with threat detection, tactics, and strategy
+     * NOW INCLUDES: Destination Safety Analysis & Exchange Analysis for Captures
+     */
+    private function evaluatePlayerMove($move, $threatenedPieces) {
+        error_log("DEBUG: evaluatePlayerMove called for move: " . json_encode($move)); // ADD THIS
+        $score = 0;
+   
+        // Basic capture value
+        $capturedPiece = $this->game->getPiece($move['toQ'], $move['toR']);
+        if ($capturedPiece && $capturedPiece->player !== $this->playerSlot) {
+            $score += $this->pieceValues[$capturedPiece->type];
             
-            // Extra bonus for saving more valuable pieces
-            if ($threatened['value'] >= 5) { // Rook or Queen
-                $score += 5;
+            // BONUS: High-value captures get extra points
+            if ($this->pieceValues[$capturedPiece->type] >= 5) {
+                $score += 2; // Extra bonus for rook/queen captures
             }
-            break;
         }
-    }
-    
-    // TACTICAL BONUS: Check for forks and double attacks
-    $forkBonus = $this->evaluateForkPotential($move);
-    $score += $forkBonus;
-    
-    // DEFENSIVE BONUS: Protecting other threatened pieces
-    foreach ($threatenedPieces as $threatened) {
-        if ($this->moveProtectsPiece($move, $threatened['q'], $threatened['r'])) {
-            $protectBonus = $threatened['value'] * 0.5; // Half value for protecting
-            $score += $protectBonus;
+        
+        // ===== NEW: DESTINATION SAFETY ANALYSIS =====
+        // Check if we're moving into an attacked square (prevents losing pieces for nothing)
+        $movingPiece = $this->game->getPiece($move['fromQ'], $move['fromR']);
+        if ($movingPiece) {
+            $destinationAttackers = $this->getPiecesAttacking($move['toQ'], $move['toR']);
+            
+            if (!empty($destinationAttackers)) {
+                $ourPieceValue = $this->pieceValues[$movingPiece->type];
+                $cheapestAttacker = min(array_column($destinationAttackers, 'value'));
+                
+                // If they can capture us with a cheaper piece, this is a bad move
+                if ($ourPieceValue > $cheapestAttacker) {
+                    $dangerPenalty = ($ourPieceValue - $cheapestAttacker) * -2; // Heavy penalty
+                    $score += $dangerPenalty;
+                    
+                    // CRITICAL: Don't move valuable pieces to attacked squares unless justified
+                    if ($ourPieceValue >= 5) { // Rook or Queen
+                        $score -= 8; // Extra penalty for endangering major pieces
+                    }
+                }
+            }
         }
-    }
-    
-    // COUNTER-ATTACK BONUS: Capturing the piece that's threatening us
-    if ($capturedPiece) {
+        
+        // ===== NEW: EXCHANGE ANALYSIS FOR CAPTURES =====
+        // When capturing, calculate if the exchange is favorable
+        if ($capturedPiece && $movingPiece) {
+            $ourPieceValue = $this->pieceValues[$movingPiece->type];
+            $capturedValue = $this->pieceValues[$capturedPiece->type];
+            
+            // Check if destination is defended after capture
+            $destinationAttackers = $this->getPiecesAttacking($move['toQ'], $move['toR']);
+            
+            if (!empty($destinationAttackers)) {
+                $cheapestDefender = min(array_column($destinationAttackers, 'value'));
+                
+                // Calculate exchange: What we gain vs what we might lose
+                $exchangeValue = $capturedValue - $ourPieceValue;
+                
+                if ($exchangeValue < 0) {
+                    // Bad exchange: we lose more than we gain
+                    $score += $exchangeValue * 1.5; // Penalty for bad trades
+                    
+                    // EXTRA PENALTY: Never trade Queen for Pawn/Knight/Bishop
+                    if ($ourPieceValue >= 9 && $capturedValue <= 3) {
+                        $score -= 10; // Massive penalty for terrible trades
+                    }
+                } else if ($exchangeValue > 0) {
+                    // Good exchange: we gain more than we lose
+                    $score += $exchangeValue * 0.5; // Bonus for favorable trades
+                }
+            }
+        }
+        
+        // MAJOR BONUS: Saving a threatened piece
+        if ($movingPiece) {
+            foreach ($threatenedPieces as $threatened) {
+                if ($threatened['q'] == $move['fromQ'] && $threatened['r'] == $move['fromR']) {
+                    // This move saves a threatened piece!
+                    $saveBonus = $threatened['value'] * 2; // Double the piece value as bonus
+                    $score += $saveBonus;
+                    
+                    // Extra bonus for saving more valuable pieces
+                    if ($threatened['value'] >= 5) { // Rook or Queen
+                        $score += 5;
+                    }
+                    break;
+                }
+            }
+        }
+        
+        // TACTICAL BONUS: Check for forks and double attacks
+        $forkBonus = $this->evaluateForkPotential($move);
+        $score += $forkBonus;
+        
+        // DEFENSIVE BONUS: Protecting other threatened pieces
         foreach ($threatenedPieces as $threatened) {
-            if ($this->isPieceAttackedBy($threatened['q'], $threatened['r'], $move['toQ'], $move['toR'])) {
-                $score += 3; // Bonus for counter-attacking
-                break;
+            if ($this->moveProtectsPiece($move, $threatened['q'], $threatened['r'])) {
+                $protectBonus = $threatened['value'] * 0.5; // Half value for protecting
+                $score += $protectBonus;
             }
         }
-    }
-    
-    // KING SAFETY: Strong penalty for exposing king
-    if ($this->wouldExposeKing($move)) {
-        $score -= 15; // Increased penalty - never expose the king!
-    }
-    
-    // *** CRITICAL FIX 3: CHECK ESCAPING ***
-    // If we're in check, prioritize getting out of check
-    if ($this->game->isKingInCheck($this->playerSlot)) {
-        // Simulate the move to see if it gets us out of check
-        $originalPiece = $this->game->getPiece($move['toQ'], $move['toR']);
-        $this->game->board[$move['toQ']][$move['toR']] = $movingPiece;
-        $this->game->board[$move['fromQ']][$move['fromR']] = null;
         
-        $stillInCheck = $this->game->isKingInCheck($this->playerSlot);
-        
-        // Undo the move
-        $this->game->board[$move['fromQ']][$move['fromR']] = $movingPiece;
-        $this->game->board[$move['toQ']][$move['toR']] = $originalPiece;
-        
-        if (!$stillInCheck) {
-            $score += 12; // Big bonus for getting out of check
-        } else {
-            $score -= 5; // Penalty for moves that don't help with check
+        // COUNTER-ATTACK BONUS: Capturing the piece that's threatening us
+        if ($capturedPiece) {
+            foreach ($threatenedPieces as $threatened) {
+                if ($this->isPieceAttackedBy($threatened['q'], $threatened['r'], $move['toQ'], $move['toR'])) {
+                    $score += 3; // Bonus for counter-attacking
+                    break;
+                }
+            }
         }
+        
+        // KING SAFETY: Strong penalty for exposing king
+        if ($this->wouldExposeKing($move)) {
+            $score -= 10; // Increased penalty
+        }
+        
+        // DEVELOPMENT BONUS: Moving pieces toward center early game
+        if ($this->getMoveCount() < 20) { // Early game
+            $centerDistance = abs($move['toQ']) + abs($move['toR']) + abs($move['toQ'] + $move['toR']);
+            $score += (10 - $centerDistance) * 0.08;
+        }
+        
+        // Small random factor to avoid completely predictable play
+        $score += (rand(0, 100) / 1000); // 0-0.1 random bonus
+        
+        return $score;
     }
-    
-    // DEVELOPMENT BONUS: Moving pieces toward center early game
-    if ($this->game->moveCount < 20) { // Early game
-        $centerDistance = abs($move['toQ']) + abs($move['toR']) + abs($move['toQ'] + $move['toR']);
-        $score += (10 - $centerDistance) * 0.08;
-    }
-    
-    // Small random factor for unpredictability
-    $score += (rand(0, 100) / 100) * 0.15; // Reduced randomness
-    
-    return $score;
-}
 
 /**
  * NEW: Check if our piece will be defended at destination
@@ -385,7 +419,7 @@ private function isDestinationDefended($move) {
     return !empty($defenders);
 }
 
-/* end ADVANCED new */
+/* end PLAYER new */
 
 
     /**
@@ -439,7 +473,7 @@ private function isDestinationDefended($move) {
     }
     
     /**
-     * Evaluate a single move (original for Medium AI)
+     * Evaluate a single move (original for Basic AI)
      */
     private function evaluateMove($move) {
         $score = 0;
@@ -498,12 +532,19 @@ private function isDestinationDefended($move) {
         
         // Mobility bonus
         $ourMoves = count($this->getAllValidMovesForPlayer($this->playerSlot));
-        $theirMoves = count($this->getAllValidMovesForPlayer(1 - $this->playerSlot));
+//        $theirMoves = count($this->getAllValidMovesForPlayer(1 - $this->playerSlot));
+$theirMoves = count($this->getAllValidMovesForPlayer($this->getOpponentSlot()));
         $score += ($ourMoves - $theirMoves) * 0.1;
         
         return $score;
     }
     
+    private function getOpponentSlot(): int {
+    // If your game uses 0/1, keep the ternary; if it uses 1/2, use the second line.
+    // return $this->playerSlot === 0 ? 1 : 0;
+    return $this->playerSlot === 1 ? 2 : 1;
+}
+
     /**
      * Get position bonus for piece placement
      */
@@ -602,7 +643,7 @@ private function isDestinationDefended($move) {
             return; // Nothing interesting to log
         }
         
-        $logMessage = "AI (advanced) analysis: ";
+        $logMessage = "AI analysis: ";
         
         if (!empty($threatenedPieces)) {
             $threatCount = count(array_filter($threatenedPieces, function($t) { return $t['priority'] === 'high'; }));
@@ -764,27 +805,42 @@ private function isDestinationDefended($move) {
         return ($dq == $dr) || ($dr == $ds) || ($dq == $ds);
     }
     
-    private function isPathClear($fromQ, $fromR, $toQ, $toR) {
-        $dq = $toQ - $fromQ;
-        $dr = $toR - $fromR;
-        
-        $steps = max(abs($dq), abs($dr));
-        if ($steps <= 1) return true; // Adjacent moves are always clear
-        
-        $stepQ = $dq / $steps;
-        $stepR = $dr / $steps;
-        
-        for ($step = 1; $step < $steps; $step++) {
-            $checkQ = $fromQ + $stepQ * $step;
-            $checkR = $fromR + $stepR * $step;
-            
-            if ($this->game->getPiece($checkQ, $checkR) !== null) {
-                return false;
-            }
+private function isPathClear($fromQ, $fromR, $toQ, $toR) {
+    $dq = $toQ - $fromQ;
+    $dr = $toR - $fromR;
+    $ds = -$dq - $dr;
+
+    // Number of hexes between endpoints on a straight hex line
+    $steps = max(abs($dq), abs($dr), abs($ds));
+    if ($steps <= 1) return true; // adjacent or same
+
+    // Not a straight hex line -> no clear path (caller should have checked direction already)
+    // But keep a safety guard:
+    if ($steps === 0) return true;
+
+    // Integer direction increments (normalize by gcd of three components)
+    $g = function ($a, $b) {
+        $a = abs((int)$a); $b = abs((int)$b);
+        while ($b) { $t = $b; $b = $a % $t; $a = $t; }
+        return $a ?: 1;
+    };
+    $g3 = $g($g($dq, $dr), $ds);
+
+    $stepQ = (int)($dq / $g3);
+    $stepR = (int)($dr / $g3);
+
+    // Walk from the square next to the origin up to (but not including) the destination
+    $q = (int)$fromQ;
+    $r = (int)$fromR;
+    for ($i = 1; $i < $steps; $i++) {
+        $q += $stepQ;
+        $r += $stepR;
+        if ($this->game->getPiece($q, $r) !== null) {
+            return false;
         }
-        
-        return true;
     }
+    return true;
+}
     
     /**
      * Get all valid moves for current AI player
@@ -837,15 +893,15 @@ private function isDestinationDefended($move) {
     }
     
     /**
-     * Get AI thinking time (updated with Advanced level)
+     * Get AI thinking time
      */
     public function getThinkingTime() {
         switch ($this->difficulty) {
             case 'easy':
                 return rand(500, 1500); // 0.5-1.5 seconds
-            case 'medium':
+            case 'basic':
                 return rand(1000, 3000); // 1-3 seconds
-            case 'advanced':
+            case 'player':
                 return rand(2000, 4000); // 2-4 seconds
             case 'hard':
                 return rand(2000, 5000); // 2-5 seconds
@@ -855,17 +911,17 @@ private function isDestinationDefended($move) {
     }
     
     /**
-     * Get AI personality name (enhanced with Advanced level)
+     * Get AI personality name
      */
     public function getAIName() {
         $names = [
             'easy' => ['Rookie', 'Cadet', 'Novice', 'Learner', 'Scout'],
-            'medium' => ['Knight', 'Captain', 'Warrior', 'Guardian', 'Sergeant'],
-            'advanced' => ['Rook', 'Fortress', 'Tower', 'Defender', 'Tactician', 'Strategist'],
+            'basic' => ['Knight', 'Captain', 'Warrior', 'Guardian', 'Sergeant'],
+            'player' => ['Rook', 'Fortress', 'Tower', 'Defender', 'Tactician', 'Strategist'],
             'hard' => ['Master', 'Grandmaster', 'Champion', 'Legend', 'Overlord']
         ];
         
-        $difficultyNames = $names[$this->difficulty] ?? $names['medium'];
+        $difficultyNames = $names[$this->difficulty] ?? $names['basic'];
         return $difficultyNames[array_rand($difficultyNames)];
     }
 }
