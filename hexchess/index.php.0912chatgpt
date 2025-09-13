@@ -11,9 +11,9 @@ clearstatcache();
 // ------------------------------------------------------------
 
 // Production-friendly error settings
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
+ini_set('display_errors', 0);
 error_reporting(E_ALL);
+ini_set('log_errors', 1);
 
 session_start();
 
@@ -770,11 +770,6 @@ case 'move':
     exit;
 
 case 'getValidMoves':
-    header('Content-Type: application/json; charset=utf-8');
-    if (ob_get_level()) {
-        ob_clean(); // Clear any output buffers
-    }
-
     // Start with basic error catching
     try {
         error_log("=== getValidMoves DEBUG START ===");
@@ -978,134 +973,6 @@ case 'getValidMoves':
 */
 
 case 'ai_move':
-    // Start output buffering to capture ALL debug output
-    ob_start();
-    
-    try {
-        if (!isset($_SESSION['user_id'])) {
-            ob_clean();
-            echo json_encode(['success' => false, 'error' => 'Not logged in']);
-            exit;
-        }
-
-        $gameId = trim($_POST['game_id'] ?? '');
-        if ($gameId === '') {
-            ob_clean();
-            echo json_encode(['success' => false, 'error' => 'Game ID required']);
-            exit;
-        }
-
-        $gameInfo = $gameManager->getGame($gameId);
-        if (!$gameInfo || empty($gameInfo['game'])) {
-            ob_clean();
-            echo json_encode(['success' => false, 'error' => 'Game not found']);
-            exit;
-        }
-
-        $game = $gameInfo['game'];
-        $gameData = $gameInfo['data'] ?? [];
-        $players = $gameInfo['players'] ?? [];
-
-        $gameMode = $gameData['game_mode'] ?? '';
-        if ($gameMode !== 'ai') {
-            ob_clean();
-            echo json_encode(['success' => false, 'error' => 'Not an AI game']);
-            exit;
-        }
-
-        // Find AI player slot
-        $aiPlayerSlot = null;
-        $userPlayerSlot = null;
-        
-        foreach ($players as $p) {
-            if ((int)$p['user_id'] === (int)$_SESSION['user_id']) {
-                $userPlayerSlot = (int)$p['player_slot'];
-            } else {
-                $aiPlayerSlot = (int)$p['player_slot'];
-            }
-        }
-        
-        if ($aiPlayerSlot === null) {
-            $aiPlayerSlot = ($userPlayerSlot === 0) ? 1 : 0;
-        }
-
-        // Check if it's AI's turn
-        $currentPlayerSlot = (int)$game->getCurrentPlayerSlot();
-        if ($currentPlayerSlot !== (int)$aiPlayerSlot) {
-            ob_clean();
-            echo json_encode(['success' => false, 'error' => 'Not AI turn']);
-            exit;
-        }
-
-        // Check if game is over
-        $gameState = $game->getGameState();
-        if (!empty($gameState['gameStatus']['gameOver'])) {
-            ob_clean();
-            echo json_encode(['success' => false, 'error' => 'Game is over']);
-            exit;
-        }
-
-        // Get AI difficulty
-        $aiDifficulty = $gameData['ai_difficulty'] ?? 'basic';
-        
-        // Create AI and make move (this generates the debug output)
-        $ai = new HexChessAI($game, $aiDifficulty, (int)$aiPlayerSlot);
-        $moveResult = $ai->makeMove();
-
-        if ($moveResult === true) {
-            // Save the updated game state
-            if (method_exists($gameManager, 'updateGameState')) {
-                $gameManager->updateGameState($gameId, $game);
-            } elseif (method_exists($gameManager, 'saveGame')) {
-                $gameManager->saveGame($gameId, $game);
-            }
-
-            // Get updated game state
-            $newGameState = $game->getGameState();
-            
-            // Check if game ended
-            if (!empty($newGameState['gameStatus']['gameOver'])) {
-                $winnerId = $newGameState['gameStatus']['winner'] ?? null;
-                if ($winnerId) {
-                    $gameManager->finishGame($gameId, $winnerId);
-                }
-            }
-
-            // Discard ALL captured output and send clean JSON
-            ob_clean();
-            echo json_encode([
-                'success' => true,
-                'gameState' => $newGameState,
-                'kingsInCheck' => $newGameState['kingsInCheck'] ?? [],
-                'aiName' => (method_exists($ai, 'getAIName') ? $ai->getAIName() : 'AI'),
-                'newCurrentPlayer' => $game->getCurrentPlayerSlot()
-            ]);
-        } else {
-            // Discard ALL captured output and send clean JSON
-            ob_clean();
-            echo json_encode([
-                'success' => false, 
-                'error' => 'AI could not make a move'
-            ]);
-        }
-
-    } catch (Exception $e) {
-        // Discard ALL captured output and send clean JSON
-        ob_clean();
-        error_log("AI Move Error: " . $e->getMessage());
-        echo json_encode([
-            'success' => false, 
-            'error' => 'Server error during AI move'
-        ]);
-    }
-    
-    // End output buffering
-    ob_end_flush();
-    exit;
-
-
-    /*
-    case 'ai_move':
     header('Content-Type: application/json; charset=utf-8');
 
     ini_set('display_errors', 1);
@@ -1240,7 +1107,7 @@ case 'ai_move':
     } finally {
         if ($__old_handler !== null) set_error_handler($__old_handler);
     }
-*/
+
 
             default:
                 echo json_encode(['success' => false, 'error' => 'Unknown action']);
@@ -1264,7 +1131,6 @@ function calculateStartingPositions($playerCount) {
         default: return [0, 3];
     }
 }
-/* */
 
 $isLoggedIn  = isset($_SESSION['user_id']);
 $currentUser = $isLoggedIn ? $user->getUserById($_SESSION['user_id']) : null;
@@ -1334,7 +1200,7 @@ function getRoomDisplayName($page, $gameData = null, $game = null, $players = nu
         <h1>🏰 HexChess Online</h1>
  <?php if ($page === 'game' && isset($gameData['game_name'])): ?>
     <div style="font-size: 18px; background: linear-gradient(45deg, #fff, #e0e0e0); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin-top: 6px;">
-        <!?php echo htmlspecialchars($gameData['game_name']); ?>
+        <?php echo htmlspecialchars($gameData['game_name']); ?>
     </div>
 <?php endif; ?>
     </div>
@@ -1887,12 +1753,13 @@ if ($gameMode === 'hotseat'): ?>
       </div>
 
 <script>
+/* Init globals from #hexchess-root (no auto AI trigger here; see unified trigger below) */
 (function () {
   var root = document.getElementById('hexchess-root');
   if (!root) return;
 
-  // ONLY data initialization - NO AI triggers here
-  window.gameId = root.dataset.gameId || null;
+  // 1) Publish globals for game.js
+  window.gameId   = root.dataset.gameId || null;
   window.gameMode = root.dataset.gameMode || 'multiplayer';
   window.isAIGame = (window.gameMode === 'ai');
 
@@ -1904,11 +1771,15 @@ if ($gameMode === 'hotseat'): ?>
   window.userPlayerSlot    = ups !== '' ? parseInt(ups, 10) : null;
   window.aiPlayerSlot      = ais === '' ? null : parseInt(ais, 10);
 
+  // Options
   window.fogOfWarEnabled   = root.dataset.fogOfWar === '1';
   window.shogiDropsEnabled = root.dataset.shogiDrops === '1';
+
+  // 2) Normalize turn ownership (in hotseat the server already allows clicks)
   window.userCanMove = (root.dataset.userCanMove === '1');
-  
-  // Remove all AI trigger logic from this section
+  if (window.isAIGame) {
+    window.userCanMove = (window.currentPlayerSlot === window.userPlayerSlot);
+  }
 })();
 </script>
 
@@ -1953,49 +1824,49 @@ if ($gameMode === 'hotseat'): ?>
 </script>
 
 <script>
-// Single AI trigger - no conflicts
-(function() {
-    if (typeof isAIGame === 'undefined' || !isAIGame) return;
-    
-    let triggered = false;
-    
-    function triggerAI() {
-        if (triggered) return;
-        if (!gameId || currentPlayerSlot !== aiPlayerSlot) return;
-        
-        triggered = true;
-        
-        fetch(window.location.href, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-            body: 'action=ai_move&game_id=' + encodeURIComponent(gameId)
-        })
-        .then(r => r.text())
-        .then(text => {
-            try {
-                const data = JSON.parse(text);
-                if (data && data.success) {
-                    location.reload();
-                } else {
-                    console.warn('AI move failed:', data);
-                    triggered = false;
-                }
-            } catch (e) {
-                console.error('JSON parse error:', e, 'Response:', text);
-                triggered = false;
-            }
-        })
-        .catch(err => {
-            console.error('AI move error:', err);
-            triggered = false;
-        });
-    }
-    
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', triggerAI);
-    } else {
-        triggerAI();
-    }
+/** Unified Auto-trigger AI turn (single source of truth) */
+(function () {
+  if (typeof isAIGame === 'undefined' || !isAIGame) return;
+
+  let aiTriggeredThisLoad = false;
+
+  function requestAIMove() {
+    if (aiTriggeredThisLoad) return;
+    if (!gameId) return;
+    if (typeof currentPlayerSlot !== 'number' || typeof aiPlayerSlot !== 'number') return;
+    if (currentPlayerSlot !== aiPlayerSlot) return; // Not AI's turn
+
+    aiTriggeredThisLoad = true;
+
+    const body = new URLSearchParams();
+    body.set('action', 'ai_move');
+    body.set('game_id', String(gameId));
+
+    fetch(window.location.href, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+      credentials: 'same-origin'
+    })
+    .then(r => r.json())
+    .then(d => {
+      if (d && d.success) {
+        location.reload();
+      } else {
+        console.warn('AI move declined:', (d && d.error) || d);
+        aiTriggeredThisLoad = false; // allow retry if it really wasn’t AI’s turn yet
+      }
+    })
+    .catch(err => {
+      console.error('AI move error:', err);
+      aiTriggeredThisLoad = false;
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', requestAIMove);
+  window.addEventListener('pageshow', function (e) {
+    if (e.persisted) requestAIMove();
+  });
 })();
 </script>
 
